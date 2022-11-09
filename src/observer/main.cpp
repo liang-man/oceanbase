@@ -547,5 +547,6 @@ int main(int argc, char *argv[])
   OB_LOGGER.set_stop_append_log();
   OB_LOGGER.set_enable_async_log(false);
   OB_LOGGER.set_enable_log_limit(false);
+  
   return ret;
 }
