@@ -171,7 +171,8 @@ if [ $NEED_SHARE_CACHE == "OFF" ]; then
 fi
 
 # 删除本地依赖文件
-rm -rf ${WORKSPACE_DEPS_3RD}
+# RioChen
+# rm -rf ${WORKSPACE_DEPS_3RD}
 
 if [ ${NEED_SHARE_CACHE} == "ON" ]; then
     # 判断共享目录是否存在
@@ -239,21 +240,22 @@ do
         [[ "$temp" != "" ]] && target_name=${temp#*=}
         if [[ -f "${TARGET_DIR_3RD}/pkg/${pkg}" ]]; then
             echo_log "find package <${pkg}> in cache"
-        else
-            echo_log "downloading package <${pkg}>"
-            repo=${targets["$target_name"]}
-            TEMP=$(mktemp -p "/" -u ".${pkg}.XXXX")
-            wget "$repo/${pkg}" -O "${TARGET_DIR_3RD}/pkg/${TEMP}" &> ${TARGET_DIR_3RD}/pkg/error.log
-            if (( $? == 0 )); then
-                mv -f "${TARGET_DIR_3RD}/pkg/$TEMP" "${TARGET_DIR_3RD}/pkg/${pkg}"
-                rm -rf ${TARGET_DIR_3RD}/pkg/error.log
-            else
-                cat ${TARGET_DIR_3RD}/pkg/error.log
-                rm -rf "${TARGET_DIR_3RD}/pkg/$TEMP"
-                echo_err "wget $repo/${pkg}"
-                echo_err "Failed to init rpm deps"
-                exit 4
-            fi
+        # RioChen
+        # else
+        #     echo_log "downloading package <${pkg}>"
+        #     repo=${targets["$target_name"]}
+        #     TEMP=$(mktemp -p "/" -u ".${pkg}.XXXX")
+        #     wget "$repo/${pkg}" -O "${TARGET_DIR_3RD}/pkg/${TEMP}" &> ${TARGET_DIR_3RD}/pkg/error.log
+        #     if (( $? == 0 )); then
+        #         mv -f "${TARGET_DIR_3RD}/pkg/$TEMP" "${TARGET_DIR_3RD}/pkg/${pkg}"
+        #         rm -rf ${TARGET_DIR_3RD}/pkg/error.log
+        #     else
+        #         cat ${TARGET_DIR_3RD}/pkg/error.log
+        #         rm -rf "${TARGET_DIR_3RD}/pkg/$TEMP"
+        #         echo_err "wget $repo/${pkg}"
+        #         echo_err "Failed to init rpm deps"
+        #         exit 4
+        #     fi
         fi
         echo_log "unpack package <${pkg}>... \c"
         if [ "$ID" = "arch" ]; then
