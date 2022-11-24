@@ -7,6 +7,22 @@
 #include "storage/tablet/ob_tablet_create_delete_helper.h"
 #include "storage/tx_storage/ob_ls_service.h"
 
+#include <iostream>    
+#include <fstream>
+#include <string>
+#include <thread>
+#include <vector> 
+#include <numeric>
+#include <chrono>
+#include <semaphore.h> 
+#include <pthread.h>
+#include <mutex>
+#include <sstream>
+// #include <sys/sysinfo.h>
+// #include <unistd.h>
+
+std::mutex mtx;
+
 namespace oceanbase
 {
 namespace sql
@@ -75,7 +91,8 @@ int ObLoadDataBuffer::squash()
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadDataBuffer not init", KR(ret), KP(this));
   } else {
-    const int64_t data_size = get_data_size();
+    // sem_wait(semLock);   // 凡是修改、调用公共量，都得加锁
+    const int64_t data_size = get_data_size();   // data_size一开始为0  执行end_pos_ - begin_pos_
     if (data_size > 0) {
       MEMMOVE(data_, data_ + begin_pos_, data_size);
     }
@@ -107,8 +124,10 @@ int ObLoadSequentialFileReader::open(const ObString &filepath)
   return ret;
 }
 
-int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer)
+int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer, sem_t *semLock)
 {
+  // sem_wait(semLock);
+  // mtx.lock();
   int ret = OB_SUCCESS;
   if (OB_UNLIKELY(!file_reader_.is_opened())) {
     ret = OB_FILE_NOT_OPENED;
@@ -116,18 +135,26 @@ int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer)
   } else if (is_read_end_) {
     ret = OB_ITER_END;
   } else if (OB_LIKELY(buffer.get_remain_size() > 0)) {
-    const int64_t buffer_remain_size = buffer.get_remain_size();
+    const int64_t buffer_remain_size = buffer.get_remain_size();   // buffer_remain_size一开始为2097152，即2M 
     int64_t read_size = 0;
-    if (OB_FAIL(file_reader_.pread(buffer.end(), buffer_remain_size, offset_, read_size))) {
+    // mtx.lock();
+    if (OB_FAIL(file_reader_.pread(buffer.end(), buffer_remain_size, offset_, read_size))) {   // 读取2M的数据
       LOG_WARN("fail to do pread", KR(ret));
     } else if (read_size == 0) {
       is_read_end_ = true;
       ret = OB_ITER_END;
     } else {
-      offset_ += read_size;
-      buffer.produce(read_size);
+      // 这个offset_就是下一轮2M数据的起点
+      // offset_是一个公共量，多线程修改时要加锁
+      // sem_wait(semLock);           // 凡是修改、调用公共量，都得加锁
+      offset_ += read_size;        // 只要csv文件超过2M，那么这个read_size基本上都是2097152
+      // sem_post(semLock);
+      buffer.produce(read_size);   // 执行end_pos_ += read_size
     }
+    // mtx.unlock();
   }
+  // sem_post(semLock);
+  // mtx.unlock();
   return ret;
 }
 
@@ -199,12 +226,13 @@ int ObLoadCSVPaser::get_next_row(ObLoadDataBuffer &buffer, const ObNewRow *&row)
     } else if (0 == nrows) {
       ret = OB_ITER_END;
     } else {
-      buffer.consume(str - buffer.begin());
+      buffer.consume(str - buffer.begin());    // str - buffer.begin()长度为119，为一行记录的字节长度
       const ObIArray<ObCSVGeneralParser::FieldValue> &field_values_in_file =
         csv_parser_.get_fields_per_line();
+      // 对这一行的每个字段做类型转换，都转为string
       for (int64_t i = 0; i < row_.count_; ++i) {
         const ObCSVGeneralParser::FieldValue &str_v = field_values_in_file.at(i);
-        ObObj &obj = row_.cells_[i];
+        ObObj &obj = row_.cells_[i];   // cells是所有字段的集合
         if (str_v.is_null_) {
           obj.set_null();
         } else {
@@ -710,6 +738,7 @@ int ObLoadSSTableWriter::init(const ObTableSchema *table_schema)
       table_key_.log_ts_range_.end_log_ts_ = ObTimeUtil::current_time_ns();
       datum_row_.row_flag_.set_flag(ObDmlFlag::DF_INSERT);
       datum_row_.mvcc_row_flag_.set_last_multi_version_row(true);
+      // 往主键字段后面加两个多版本字段
       datum_row_.storage_datums_[rowkey_column_num_].set_int(-1); // fill trans_version
       datum_row_.storage_datums_[rowkey_column_num_ + 1].set_int(0); // fill sql_no
       is_inited_ = true;
@@ -800,17 +829,17 @@ int ObLoadSSTableWriter::append_row(const ObLoadDatumRow &datum_row)
   return ret;
 }
 
-int ObLoadSSTableWriter::create_sstable()
+int  ObLoadSSTableWriter::create_sstable()
 {
   int ret = OB_SUCCESS;
   ObTableHandleV2 table_handle;
-  SMART_VAR(ObSSTableMergeRes, merge_res)
+  SMART_VAR(ObSSTableMergeRes, merge_res)    // merge_res是最终的一个结果，从sstable_index_build里取出来的
   {
     const ObStorageSchema &storage_schema = tablet_handle_.get_obj()->get_storage_schema();
     int64_t column_count = 0;
     if (OB_FAIL(storage_schema.get_stored_column_count_in_sstable(column_count))) {
       LOG_WARN("fail to get stored column count in sstable", KR(ret));
-    } else if (OB_FAIL(sstable_index_builder_.close(column_count, merge_res))) {
+    } else if (OB_FAIL(sstable_index_builder_.close(column_count, merge_res))) {    // 根据这个结果构造一个参数column_count
       LOG_WARN("fail to close sstable index builder", KR(ret));
     } else {
       ObTabletCreateSSTableParam create_param;
@@ -857,6 +886,7 @@ int ObLoadSSTableWriter::create_sstable()
         ObUpdateTableStoreParam table_store_param(table_handle,
                                                   tablet_handle_.get_obj()->get_snapshot_version(),
                                                   false, &storage_schema, rebuild_seq, true, true);
+        // 把表更新到对应的存储队列里去 
         if (OB_FAIL(ls_handle_.get_ls()->update_tablet_table_store(tablet_id_, table_store_param,
                                                                    new_tablet_handle))) {
           LOG_WARN("fail to update tablet table store", KR(ret), K(tablet_id_),
@@ -963,17 +993,180 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   return ret;
 }
 
+void thread_load_csv(ObLoadDataDirectDemo *this_, sem_t *semLock, int &ret, int i) 
+{
+  #if 0
+  this_->buffer_[i].thread_ID_ = i;
+
+  std::fstream ofile("/root/1out.csv", std::ios::out);
+
+  if (OB_FAIL(this_->buffer_[i].squash())) {    
+      LOG_WARN("fail to squash buffer", KR(ret));
+  } else if (OB_FAIL(this_->file_reader_.read_next_buffer(this_->buffer_[i], semLock))) {  
+    if (OB_UNLIKELY(OB_ITER_END != ret)) {
+      LOG_WARN("fail to read next buffer", KR(ret));
+    } else {
+      if (OB_UNLIKELY(!this_->buffer_[i].empty())) {
+        ret = OB_ERR_UNEXPECTED;
+        LOG_WARN("unexpected incomplate data", KR(ret));
+      }
+      ret = OB_SUCCESS;
+      sem_wait(semLock);
+      this_->read_complete_ = true;
+      sem_post(semLock);
+      return;   // break;
+    }
+  } else if (OB_UNLIKELY(this_->buffer_[i].empty())) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_WARN("unexpected empty buffer", KR(ret));
+  } else {
+    while (OB_SUCC(ret)) {
+      if (OB_FAIL(this_->csv_parser_.get_next_row(this_->buffer_[i], this_->buffer_[i].new_row_))) {   
+        if (OB_UNLIKELY(OB_ITER_END != ret)) {
+          LOG_WARN("fail to get next row", KR(ret));
+        } else {
+          ret = OB_SUCCESS;
+          break;
+        }
+      } else if (OB_FAIL(this_->row_caster_.get_casted_row(*(this_->buffer_[i].new_row_), this_->buffer_[i].datum_row_))) {   
+        LOG_WARN("fail to cast row", KR(ret));
+      } else if (OB_FAIL(this_->external_sort_.append_row(*(this_->buffer_[i].datum_row_)))) {  
+        LOG_WARN("fail to append row", KR(ret));
+      } else {
+        const char *str = this_->buffer_[i].new_row_->cells_->get_string_ptr();
+        int len = this_->buffer_[i].new_row_->cells_->get_string_len();
+        if(ofile && ofile.is_open()) {
+          for (int i = 0; i < len; ++i)
+            ofile.write(&str[i], 1);
+        }
+        int a = 5;
+      }
+    }
+  }
+  #endif
+}
+
+void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_,
+                          ObLoadDataBuffer *buffer_i, ObLoadDataStmt *load_stmt, ObLoadRowCaster *row_caster_i)
+{
+  #if 0   // 输出成文件
+	is.seekg(start_point);
+	std::string url;
+  std::vector<std::string> vec = {"thread-0: ", "thread-1: ", "thread-2: ", "thread-3: ", "thread-4: ", "thread-5: ", "thread-6: ", "thread-7: "};
+	while(volume > 0 && getline(is, url)) {
+    // url = vec[id] + url + "\n";
+    out << url;
+		volume -= url.size() + 1;
+
+		// if((volume & 1048575) == 1048575) printf("%d %lld\n", id, volume);
+		++cnt[id];
+	}
+  #endif
+
+  int ret = OB_SUCCESS;
+  const ObNewRow *new_row = nullptr;
+  const ObLoadDatumRow *datum_row = nullptr;
+
+  const ObLoadArgument &load_args = load_stmt->get_load_arguments();
+  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list = load_stmt->get_field_or_var_list(); 
+  ObLoadCSVPaser csv_parser_i;
+  csv_parser_i.init(load_stmt->get_data_struct_in_file(), field_or_var_list.count(), load_args.file_cs_type_);
+
+  while (OB_SUCC(ret)) {
+    // 笔记：csv_parser_不能公用，得一个buffer一个csv_parser；同理row_caster_也是一个buffer一个row_caster
+    if (OB_FAIL(csv_parser_i.get_next_row(*buffer_i, new_row))) {   
+      if (OB_UNLIKELY(OB_ITER_END != ret)) {
+        LOG_WARN("fail to get next row", KR(ret));
+      } else {
+        ret = OB_SUCCESS;
+        break;
+      }
+    } else if (OB_FAIL(row_caster_i->get_casted_row(*new_row, datum_row))) {   
+      LOG_WARN("fail to cast row", KR(ret));
+    } 
+    // else if (OB_FAIL(this_->external_sort_.append_row(*datum_row))) {  
+    //   LOG_WARN("fail to append row", KR(ret));
+    // }
+    /*else {
+      // 写入读取到的每一行记录到文件里
+      for (int i = 0; i < new_row->count_; ++i) {
+        const char *str = new_row->cells_[i].get_string_ptr();
+        int len = new_row->cells_[i].get_string_len();
+        if (i != 0) {
+          char ch = '|';
+          out.write(&ch, 1);
+        }
+        if(out && out.is_open()) {
+          for (int j = 0; j < len; ++j)
+            out.write(str + j, 1);
+        }
+      }
+      char ch = '\n';
+      out.write(&ch, 1);
+    }*/
+  }
+}
+
+std::vector<std::pair<int64_t, int64_t>> get_read_pos(ObLoadDataBuffer *buffer, int threads, int64_t length, std::istringstream &is)
+{
+  std::vector<std::pair<int64_t, int64_t>> res(threads);
+  std::string buf_string(buffer->data(), buffer->get_data_size());
+  is.str(buf_string);
+	res[0].first = 0;
+	for(int i = 1; i < threads; ++i) {
+		is.seekg(length/threads * i);   // seekg(val),从第val个字节之后开始读，不读第val个字节
+		{
+			std::string tmp; 
+			getline(is, tmp);
+		}
+		res[i].first = is.tellg();
+		res[i-1].second = res[i].first - res[i-1].first;
+	}
+	res.back().second = length - res.back().first;
+	
+	for (int i = 0; i < res.size(); ++i)
+		printf("thread-%d start: %ld, end: %ld, size: %ld\n", i, res[i].first, res[i].first + res[i].second, res[i].second);
+	
+	return res;
+}
+
 int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 {
   int ret = OB_SUCCESS;
   const ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
-  // int cnt = 0;
-  while (OB_SUCC(ret)) {
-    // cnt++;
+
+  sem_t semLock;  
+
+	sem_init(&semLock, 0, 1); 
+
+  int threads = 8;
+
+  std::fstream ofile("/root/2out.csv", std::ios::out);
+
+  std::ofstream out("/root/1out.csv");
+
+  // 初始化
+  const ObLoadArgument &load_args = load_stmt.get_load_arguments();
+  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list = load_stmt.get_field_or_var_list(); 
+  ObLoadDataBuffer buffer_i[8];     // buffer_i是分配的动态内存，最后需要手动释放
+  ObLoadCSVPaser csv_parser_i[8];   // csv_parser_i和row_caster_i，在do_load()函数结束，就会被释放了
+  ObLoadRowCaster row_caster_i[8];
+  for (int i = 0; i < threads; ++i) {
+    // 初始化buffer
+    buffer_i[i].create(FILE_BUFFER_SIZE);
+    // 初始化csv_parser
+    // csv_parser_i[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(), load_args.file_cs_type_);
+    // 初始化row_caster
+    // const ObTableSchema *table_schema = nullptr;
+    // row_caster_i[i].init(table_schema, field_or_var_list);
+    row_caster_i[i].init(nullptr, field_or_var_list);
+  }
+
+  while (OB_SUCC(ret)) {   // 条件为假，表示整个文件数据都读取完了
     if (OB_FAIL(buffer_.squash())) {    
-      LOG_WARN("fail to squash buffer", KR(ret));
-    } else if (OB_FAIL(file_reader_.read_next_buffer(buffer_))) {  
+        LOG_WARN("fail to squash buffer", KR(ret));
+    } else if (OB_FAIL(file_reader_.read_next_buffer(buffer_, &semLock))) {  
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to read next buffer", KR(ret));
       } else {
@@ -982,37 +1175,57 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
           LOG_WARN("unexpected incomplate data", KR(ret));
         }
         ret = OB_SUCCESS;
-        break;
+        break;   
       }
     } else if (OB_UNLIKELY(buffer_.empty())) {
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("unexpected empty buffer", KR(ret));
     } else {
-      // int rowCnt = 0;
-      while (OB_SUCC(ret)) {
-        if (OB_FAIL(csv_parser_.get_next_row(buffer_, new_row))) {   
-          if (OB_UNLIKELY(OB_ITER_END != ret)) {
-            LOG_WARN("fail to get next row", KR(ret));
-          } else {
-            ret = OB_SUCCESS;
-            break;
-          }
-        } else if (OB_FAIL(row_caster_.get_casted_row(*new_row, datum_row))) {   
-          LOG_WARN("fail to cast row", KR(ret));
-        } else if (OB_FAIL(external_sort_.append_row(*datum_row))) {  
-          LOG_WARN("fail to append row", KR(ret));
-        }
-
-        // rowCnt++;
+      // 多线程读取buffer_中的数据
+      // 现在buffer_里存储着小于等于2M的数据，先获取buffer_实际字节大小
+      int64_t buffer_size = buffer_.get_data_size();
+      // 给每个线程划分要读取的数据范围：起始点，终止点
+      std::istringstream is;
+      std::vector<std::pair<int64_t, int64_t>> read_pos = get_read_pos(&buffer_, threads, buffer_size, is);
+      // 将buffer_一分为8
+      // 在每个线程内，各自对数据进行get_next_row和get_casted_row操作
+      std::vector<std::thread> vec_thread;
+      for(int i = 0; i < threads; ++i) {
+        buffer_i[i].set_data(buffer_.data());
+        buffer_i[i].set_begin(read_pos[i].first);
+        buffer_i[i].set_end(read_pos[i].first + read_pos[i].second);
+        buffer_i[i].set_threadID(i);
+      
+        // 笔记：①通过this指针传递调用当前成员函数的类的对象. ②创建线程时，传递的参数为引用时要加std::ref().
+        std::thread th(thread_read_buffer, i, read_pos[i].first, read_pos[i].second, std::ref(is), std::ref(out), this, &buffer_i[i], &load_stmt, &row_caster_i[i]);
+        vec_thread.push_back(std::move(th));
       }
+      for(auto &th : vec_thread)
+        th.join();
+
+      buffer_.set_begin(buffer_i[threads-1].begin_pos());
+      buffer_.set_end(buffer_i[threads-1].end_pos());
+      // 每个线程将最终得到的datum_row写入external_sort_，得加锁
+      // 注：虽然往external_sort_内写入记录的顺序改变了，但是存满1G后都要排序，所以写入顺序不是buffer_里原来的顺序，也没问题
     }
   }
+  // ofile.close();
+  // out.close();
+  // 释放buffer_i
+  for (int i = 0; i < threads; ++i) {
+    // TODO
+  }
+
+  // 对读取的所有数据进行外部排序
   if (OB_SUCC(ret)) {
     if (OB_FAIL(external_sort_.close())) {   // 进行merge_sort排序
       LOG_WARN("fail to close external sort", KR(ret));
     }
   }
-  while (OB_SUCC(ret)) {
+  // 将排序好的记录，存储为SSTable
+  // int counter = 0;
+  while (OB_SUCC(ret)) {      // 有多少行记录，循环多少次
+    // counter++;
     if (OB_FAIL(external_sort_.get_next_row(datum_row))) {    
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to get next row", KR(ret));
@@ -1024,6 +1237,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
       LOG_WARN("fail to append row", KR(ret));
     }
   }
+  // close()就是把内存中的数据刷到宏块上，同时把刷出来的宏快丢给sstable_index_build去，之后就是构造sstable了
   if (OB_SUCC(ret)) {
     if (OB_FAIL(sstable_writer_.close())) {
       LOG_WARN("fail to close sstable writer", KR(ret));

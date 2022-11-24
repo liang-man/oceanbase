@@ -13,9 +13,14 @@ namespace oceanbase
 namespace sql
 {
 
+class ObLoadDatumRow;
+class ObLoadDataDirectDemo;
+
+// 从文件里读到数据，存储在buffer里面
 class ObLoadDataBuffer
 {
 public:
+  friend void thread_load_csv(ObLoadDataDirectDemo *this_, sem_t *semLock, int &ret, int i);
   ObLoadDataBuffer();
   ~ObLoadDataBuffer();
   void reuse();
@@ -30,27 +35,38 @@ public:
   OB_INLINE int64_t get_remain_size() const { return capacity_ - end_pos_; }
   OB_INLINE void consume(int64_t size) { begin_pos_ += size; }
   OB_INLINE void produce(int64_t size) { end_pos_ += size; }
+  // liangman
+  OB_INLINE void set_begin(int64_t begin) { begin_pos_ = begin; }
+  OB_INLINE void set_end(int64_t end) { end_pos_ = end; }
+  OB_INLINE void set_data(char *data) { data_ = data; }
+  OB_INLINE void set_threadID(int id) { thread_ID_ = id; }
+  OB_INLINE int threadID() const { return thread_ID_; }
+  OB_INLINE int64_t begin_pos() const { return begin_pos_; }
+  OB_INLINE int64_t end_pos() const { return end_pos_; }
 private:
   common::ObArenaAllocator allocator_;
   char *data_;
   int64_t begin_pos_;
   int64_t end_pos_;
   int64_t capacity_;
+  int thread_ID_ = -1;              // liangman
 };
 
+// 读本地文件
 class ObLoadSequentialFileReader
 {
 public:
   ObLoadSequentialFileReader();
   ~ObLoadSequentialFileReader();
   int open(const ObString &filepath);
-  int read_next_buffer(ObLoadDataBuffer &buffer);
+  int read_next_buffer(ObLoadDataBuffer &buffer, sem_t *semLock);
 private:
   common::ObFileReader file_reader_;
   int64_t offset_;
   bool is_read_end_;
 };
 
+// 把buffer里的数据按行去解析
 class ObLoadCSVPaser
 {
 public:
@@ -116,22 +132,28 @@ private:
   bool is_inited_;
 };
 
+// 字符集转换
+// 类型转换
+// 将主键字段移动到记录的头部(例如：c1 c2 c3 c4是建表是字段顺序，其中primary key为c3 c1，,所以存储时要存储为c3 c1 c2 c4)
 class ObLoadRowCaster
 {
 public:
   ObLoadRowCaster();
   ~ObLoadRowCaster();
+  // 初始化时就会建立好映射关系
   int init(const share::schema::ObTableSchema *table_schema,
            const common::ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list);
-  int get_casted_row(const common::ObNewRow &new_row, const ObLoadDatumRow *&datum_row);
+  int get_casted_row(const common::ObNewRow &new_row, const ObLoadDatumRow *&datum_row);    // new_row是解析出的每个字段的值，都是string；datum_row是类型转换后的值. 字段顺序都是已经转换好了
 private:
+  // 做了一个映射，将存储层的字段的位置对应到数据源的字段位置
   int init_column_schemas_and_idxs(
     const share::schema::ObTableSchema *table_schema,
     const common::ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list);
+  // 字符集的转换和类型的转换
   int cast_obj_to_datum(const share::schema::ObColumnSchemaV2 *column_schema,
                         const common::ObObj &obj, blocksstable::ObStorageDatum &datum);
 private:
-  common::ObArray<const share::schema::ObColumnSchemaV2 *> column_schemas_;
+  common::ObArray<const share::schema::ObColumnSchemaV2 *> column_schemas_;   // 每一列的结构信息，对应的是存储的列  
   common::ObArray<int64_t> column_idxs_; // Mapping of store columns to source data columns
   int64_t column_count_;
   common::ObCollationType collation_type_;
@@ -154,7 +176,7 @@ public:
 private:
   common::ObArenaAllocator allocator_;
   blocksstable::ObStorageDatumUtils datum_utils_;
-  ObLoadDatumRowCompare compare_;
+  ObLoadDatumRowCompare compare_;   // 排序的比较器
   storage::ObExternalSort<ObLoadDatumRow, ObLoadDatumRowCompare> external_sort_;
   bool is_closed_;
   bool is_inited_;
@@ -165,12 +187,12 @@ class ObLoadSSTableWriter
 public:
   ObLoadSSTableWriter();
   ~ObLoadSSTableWriter();
-  int init(const share::schema::ObTableSchema *table_schema);
-  int append_row(const ObLoadDatumRow &datum_row);
+  int init(const share::schema::ObTableSchema *table_schema);   // 初始化时用这个初始化就行
+  int append_row(const ObLoadDatumRow &datum_row);    // 往macro_block_writer里写数据时，调用这个函数就行
   int close();
 private:
-  int init_sstable_index_builder(const share::schema::ObTableSchema *table_schema);
-  int init_macro_block_writer(const share::schema::ObTableSchema *table_schema);
+  int init_sstable_index_builder(const share::schema::ObTableSchema *table_schema);   // 构造一个sstable_index_build，用于记录每个sstable的索引
+  int init_macro_block_writer(const share::schema::ObTableSchema *table_schema);   // 构造一个macro_block_writer，后面就是一直调用append_row()往里面塞数据。因为是单线程，所以只创建了一个writer，多线程可以创建多个
   int create_sstable();
 private:
   common::ObTabletID tablet_id_;
@@ -194,6 +216,8 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
 public:
+  friend void thread_load_csv(ObLoadDataDirectDemo *this_, sem_t *semLock, int &ret, int i);
+  friend void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadDataStmt *load_stmt, ObLoadRowCaster *row_caster_i);
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
   int execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt) override;
@@ -207,7 +231,12 @@ private:
   ObLoadRowCaster row_caster_;
   ObLoadExternalSort external_sort_;
   ObLoadSSTableWriter sstable_writer_;
+  // ObLoadDataBuffer buffers_[8];
+  // ObLoadDataBuffer buffer_0, buffer_1, buffer_2, buffer_3, buffer_4, buffer_5, buffer_6, buffer_7;
 };
+
+void thread_load_csv(ObLoadDataDirectDemo *this_, sem_t *semLock, int &ret, int i);
+void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadDataStmt *load_stmt, ObLoadRowCaster *row_caster_i);
 
 } // namespace sql
 } // namespace oceanbase

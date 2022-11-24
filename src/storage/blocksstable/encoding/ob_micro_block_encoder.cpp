@@ -1130,7 +1130,7 @@ int ObMicroBlockEncoder::encoder_detection()
     ret = OB_NOT_INIT;
     LOG_WARN("not init", K(ret));
   } else {
-    for (int64_t i = 0; OB_SUCC(ret) && i < ctx_.column_cnt_; ++i) {
+    for (int64_t i = 0; OB_SUCC(ret) && i < ctx_.column_cnt_; ++i) {    // 扫描每个字段
       if (OB_FAIL(prescan(i))) {
         LOG_WARN("failed to prescan", K(ret));
       }
