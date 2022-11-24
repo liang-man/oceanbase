@@ -59,7 +59,7 @@ public:
   ObLoadSequentialFileReader();
   ~ObLoadSequentialFileReader();
   int open(const ObString &filepath);
-  int read_next_buffer(ObLoadDataBuffer &buffer, sem_t *semLock);
+  int read_next_buffer(ObLoadDataBuffer &buffer);
 private:
   common::ObFileReader file_reader_;
   int64_t offset_;
@@ -216,8 +216,7 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
 public:
-  friend void thread_load_csv(ObLoadDataDirectDemo *this_, sem_t *semLock, int &ret, int i);
-  friend void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadDataStmt *load_stmt, ObLoadRowCaster *row_caster_i);
+  friend void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
   int execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt) override;
@@ -235,8 +234,8 @@ private:
   // ObLoadDataBuffer buffer_0, buffer_1, buffer_2, buffer_3, buffer_4, buffer_5, buffer_6, buffer_7;
 };
 
-void thread_load_csv(ObLoadDataDirectDemo *this_, sem_t *semLock, int &ret, int i);
-void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadDataStmt *load_stmt, ObLoadRowCaster *row_caster_i);
+// void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
+void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
 
 } // namespace sql
 } // namespace oceanbase

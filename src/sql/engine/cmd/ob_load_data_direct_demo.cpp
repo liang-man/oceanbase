@@ -124,7 +124,7 @@ int ObLoadSequentialFileReader::open(const ObString &filepath)
   return ret;
 }
 
-int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer, sem_t *semLock)
+int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer)
 {
   // sem_wait(semLock);
   // mtx.lock();
@@ -627,9 +627,11 @@ int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size
   return ret;
 }
 
+std::mutex mtx;
 int ObLoadExternalSort::append_row(const ObLoadDatumRow &datum_row)
 {
   int ret = OB_SUCCESS;
+  mtx.lock();   // 加锁
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
@@ -639,6 +641,7 @@ int ObLoadExternalSort::append_row(const ObLoadDatumRow &datum_row)
   } else if (OB_FAIL(external_sort_.add_item(datum_row))) {
     LOG_WARN("fail to add item", KR(ret));
   }
+  mtx.unlock();
   return ret;
 }
 
@@ -993,61 +996,7 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   return ret;
 }
 
-void thread_load_csv(ObLoadDataDirectDemo *this_, sem_t *semLock, int &ret, int i) 
-{
-  #if 0
-  this_->buffer_[i].thread_ID_ = i;
-
-  std::fstream ofile("/root/1out.csv", std::ios::out);
-
-  if (OB_FAIL(this_->buffer_[i].squash())) {    
-      LOG_WARN("fail to squash buffer", KR(ret));
-  } else if (OB_FAIL(this_->file_reader_.read_next_buffer(this_->buffer_[i], semLock))) {  
-    if (OB_UNLIKELY(OB_ITER_END != ret)) {
-      LOG_WARN("fail to read next buffer", KR(ret));
-    } else {
-      if (OB_UNLIKELY(!this_->buffer_[i].empty())) {
-        ret = OB_ERR_UNEXPECTED;
-        LOG_WARN("unexpected incomplate data", KR(ret));
-      }
-      ret = OB_SUCCESS;
-      sem_wait(semLock);
-      this_->read_complete_ = true;
-      sem_post(semLock);
-      return;   // break;
-    }
-  } else if (OB_UNLIKELY(this_->buffer_[i].empty())) {
-    ret = OB_ERR_UNEXPECTED;
-    LOG_WARN("unexpected empty buffer", KR(ret));
-  } else {
-    while (OB_SUCC(ret)) {
-      if (OB_FAIL(this_->csv_parser_.get_next_row(this_->buffer_[i], this_->buffer_[i].new_row_))) {   
-        if (OB_UNLIKELY(OB_ITER_END != ret)) {
-          LOG_WARN("fail to get next row", KR(ret));
-        } else {
-          ret = OB_SUCCESS;
-          break;
-        }
-      } else if (OB_FAIL(this_->row_caster_.get_casted_row(*(this_->buffer_[i].new_row_), this_->buffer_[i].datum_row_))) {   
-        LOG_WARN("fail to cast row", KR(ret));
-      } else if (OB_FAIL(this_->external_sort_.append_row(*(this_->buffer_[i].datum_row_)))) {  
-        LOG_WARN("fail to append row", KR(ret));
-      } else {
-        const char *str = this_->buffer_[i].new_row_->cells_->get_string_ptr();
-        int len = this_->buffer_[i].new_row_->cells_->get_string_len();
-        if(ofile && ofile.is_open()) {
-          for (int i = 0; i < len; ++i)
-            ofile.write(&str[i], 1);
-        }
-        int a = 5;
-      }
-    }
-  }
-  #endif
-}
-
-void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_,
-                          ObLoadDataBuffer *buffer_i, ObLoadDataStmt *load_stmt, ObLoadRowCaster *row_caster_i)
+void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i)
 {
   #if 0   // 输出成文件
 	is.seekg(start_point);
@@ -1066,15 +1015,9 @@ void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istrin
   int ret = OB_SUCCESS;
   const ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
-
-  const ObLoadArgument &load_args = load_stmt->get_load_arguments();
-  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list = load_stmt->get_field_or_var_list(); 
-  ObLoadCSVPaser csv_parser_i;
-  csv_parser_i.init(load_stmt->get_data_struct_in_file(), field_or_var_list.count(), load_args.file_cs_type_);
-
   while (OB_SUCC(ret)) {
-    // 笔记：csv_parser_不能公用，得一个buffer一个csv_parser；同理row_caster_也是一个buffer一个row_caster
-    if (OB_FAIL(csv_parser_i.get_next_row(*buffer_i, new_row))) {   
+    // 笔记：csv_parser_不能公用，得一个buffer一个csv_parser, row_caster_同理.
+    if (OB_FAIL(csv_parser_i->get_next_row(*buffer_i, new_row))) {   
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to get next row", KR(ret));
       } else {
@@ -1083,10 +1026,9 @@ void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istrin
       }
     } else if (OB_FAIL(row_caster_i->get_casted_row(*new_row, datum_row))) {   
       LOG_WARN("fail to cast row", KR(ret));
-    } 
-    // else if (OB_FAIL(this_->external_sort_.append_row(*datum_row))) {  
-    //   LOG_WARN("fail to append row", KR(ret));
-    // }
+    } else if (OB_FAIL(this_->external_sort_.append_row(*datum_row))) {  // append_row()用的是公用的this_->external_sort_，所以得加锁
+      LOG_WARN("fail to append row", KR(ret));
+    }
     /*else {
       // 写入读取到的每一行记录到文件里
       for (int i = 0; i < new_row->count_; ++i) {
@@ -1136,37 +1078,39 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   const ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
 
-  sem_t semLock;  
+  // sem_t semLock;  
 
-	sem_init(&semLock, 0, 1); 
+	// sem_init(&semLock, 0, 1); 
 
   int threads = 8;
 
-  std::fstream ofile("/root/2out.csv", std::ios::out);
-
-  std::ofstream out("/root/1out.csv");
+  // std::ofstream out("/root/1out.csv");
 
   // 初始化
   const ObLoadArgument &load_args = load_stmt.get_load_arguments();
   const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list = load_stmt.get_field_or_var_list(); 
+  const uint64_t tenant_id = load_args.tenant_id_;
+  const uint64_t table_id = load_args.table_id_;
+  ObSchemaGetterGuard schema_guard;
+  const ObTableSchema *table_schema = nullptr;
+  ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id, schema_guard);
+  schema_guard.get_table_schema(tenant_id, table_id, table_schema);
   ObLoadDataBuffer buffer_i[8];     // buffer_i是分配的动态内存，最后需要手动释放
-  ObLoadCSVPaser csv_parser_i[8];   // csv_parser_i和row_caster_i，在do_load()函数结束，就会被释放了
+  ObLoadCSVPaser csv_parser_i[8];   // csv_parser_i也是动态分配的内存，到init()函数内看到
   ObLoadRowCaster row_caster_i[8];
   for (int i = 0; i < threads; ++i) {
     // 初始化buffer
     buffer_i[i].create(FILE_BUFFER_SIZE);
     // 初始化csv_parser
-    // csv_parser_i[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(), load_args.file_cs_type_);
+    csv_parser_i[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(), load_args.file_cs_type_);
     // 初始化row_caster
-    // const ObTableSchema *table_schema = nullptr;
-    // row_caster_i[i].init(table_schema, field_or_var_list);
-    row_caster_i[i].init(nullptr, field_or_var_list);
+    row_caster_i[i].init(table_schema, field_or_var_list);
   }
 
   while (OB_SUCC(ret)) {   // 条件为假，表示整个文件数据都读取完了
     if (OB_FAIL(buffer_.squash())) {    
         LOG_WARN("fail to squash buffer", KR(ret));
-    } else if (OB_FAIL(file_reader_.read_next_buffer(buffer_, &semLock))) {  
+    } else if (OB_FAIL(file_reader_.read_next_buffer(buffer_))) {  
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to read next buffer", KR(ret));
       } else {
@@ -1197,7 +1141,8 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
         buffer_i[i].set_threadID(i);
       
         // 笔记：①通过this指针传递调用当前成员函数的类的对象. ②创建线程时，传递的参数为引用时要加std::ref().
-        std::thread th(thread_read_buffer, i, read_pos[i].first, read_pos[i].second, std::ref(is), std::ref(out), this, &buffer_i[i], &load_stmt, &row_caster_i[i]);
+        // std::thread th(thread_read_buffer, i, read_pos[i].first, read_pos[i].second, std::ref(is), std::ref(out), this, &buffer_i[i], &csv_parser_i[i], &row_caster_i[i]);
+        std::thread th(thread_read_buffer, this, &buffer_i[i], &csv_parser_i[i], &row_caster_i[i]);
         vec_thread.push_back(std::move(th));
       }
       for(auto &th : vec_thread)
@@ -1209,12 +1154,8 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
       // 注：虽然往external_sort_内写入记录的顺序改变了，但是存满1G后都要排序，所以写入顺序不是buffer_里原来的顺序，也没问题
     }
   }
-  // ofile.close();
   // out.close();
-  // 释放buffer_i
-  for (int i = 0; i < threads; ++i) {
-    // TODO
-  }
+  // 释放buffer_i、csv_parser_i、row_caster_i    TODO
 
   // 对读取的所有数据进行外部排序
   if (OB_SUCC(ret)) {
