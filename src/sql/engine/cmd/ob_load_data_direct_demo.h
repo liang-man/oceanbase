@@ -7,6 +7,7 @@
 #include "storage/blocksstable/ob_index_block_builder.h"
 #include "storage/ob_parallel_external_sort.h"
 #include "storage/tx_storage/ob_ls_handle.h"
+#include "share/ob_thread_pool.h"              // liangman
 
 namespace oceanbase
 {
@@ -15,6 +16,19 @@ namespace sql
 
 class ObLoadDatumRow;
 class ObLoadDataDirectDemo;
+
+// liangman 自旋锁
+class SpinlLock 
+{
+  std::atomic_flag flg;
+public:
+  void lock() {
+      while(flg.test_and_set(std::memory_order_acquire));
+  }
+  void unlock() {
+      flg.clear(std::memory_order_release);
+  }
+};
 
 // 从文件里读到数据，存储在buffer里面
 class ObLoadDataBuffer
@@ -216,7 +230,8 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
 public:
-  friend void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
+  // friend void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
+  friend void thread_read_buffer(void *arg);
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
   int execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt) override;
@@ -234,8 +249,49 @@ private:
   // ObLoadDataBuffer buffer_0, buffer_1, buffer_2, buffer_3, buffer_4, buffer_5, buffer_6, buffer_7;
 };
 
+void execFunc(void *arg);
 // void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
-void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
+// void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
+void thread_read_buffer(void *arg);
+
+class MyThreadPool;
+
+class Task {
+public:
+  void (*task_call_back)(void *);
+  ObLoadDataDirectDemo *_this_; 
+  ObLoadDataBuffer *buffer_i_; 
+  ObLoadCSVPaser *csv_parser_i_; 
+  ObLoadRowCaster *row_caster_i_;
+  void setFunc(void (*tcb)(void *)) { task_call_back = tcb; }
+};
+
+class WorkThread {
+public:
+  pthread_t tid_;
+  bool usable_ = true;
+  MyThreadPool *pool_;
+  static void *start(void *arg);
+};
+
+class MyThreadPool
+{
+public:
+  MyThreadPool(int thread_count) : thread_count_(thread_count), count_(0) {
+    pthread_cond_init(&cont_, nullptr);
+    pthread_mutex_init(&mutex_, nullptr);
+  }
+  virtual ~MyThreadPool();
+  void createPool();
+  void push_task(void(*tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
+
+  std::deque<Task *> task_queue_;                // 任务队列
+  std::deque<WorkThread *> work_thread_queue_;   // 执行线程队列 
+  int thread_count_;
+  int count_;
+  pthread_cond_t cont_;
+  pthread_mutex_t mutex_;
+};
 
 } // namespace sql
 } // namespace oceanbase

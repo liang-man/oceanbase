@@ -18,6 +18,8 @@
 #include <pthread.h>
 #include <mutex>
 #include <sstream>
+#include <atomic>
+#include <deque>
 // #include <sys/sysinfo.h>
 // #include <unistd.h>
 
@@ -627,11 +629,13 @@ int ObLoadExternalSort::init(const ObTableSchema *table_schema, int64_t mem_size
   return ret;
 }
 
-std::mutex mtx;
+// SpinlLock splck;   // 自旋锁 如果锁内操作很费时，就不要用自旋锁，用互斥锁
+std::mutex mtx;       // 互斥锁
 int ObLoadExternalSort::append_row(const ObLoadDatumRow &datum_row)
 {
   int ret = OB_SUCCESS;
-  mtx.lock();   // 加锁
+  // splck.lock();
+  mtx.lock();
   if (IS_NOT_INIT) {
     ret = OB_NOT_INIT;
     LOG_WARN("ObLoadExternalSort not init", KR(ret), KP(this));
@@ -641,6 +645,7 @@ int ObLoadExternalSort::append_row(const ObLoadDatumRow &datum_row)
   } else if (OB_FAIL(external_sort_.add_item(datum_row))) {
     LOG_WARN("fail to add item", KR(ret));
   }
+  // splck.unlock();
   mtx.unlock();
   return ret;
 }
@@ -996,7 +1001,8 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   return ret;
 }
 
-void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i)
+// void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i)
+void thread_read_buffer(void *arg)
 {
   #if 0   // 输出成文件
 	is.seekg(start_point);
@@ -1015,6 +1021,11 @@ void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i,
   int ret = OB_SUCCESS;
   const ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
+  Task *task = (Task *)arg;
+  ObLoadDataDirectDemo *this_ = task->_this_;
+  ObLoadDataBuffer *buffer_i = task->buffer_i_;
+  ObLoadCSVPaser *csv_parser_i = task->csv_parser_i_;
+  ObLoadRowCaster *row_caster_i = task->row_caster_i_;
   while (OB_SUCC(ret)) {
     // 笔记：csv_parser_不能公用，得一个buffer一个csv_parser, row_caster_同理.
     if (OB_FAIL(csv_parser_i->get_next_row(*buffer_i, new_row))) {   
@@ -1107,6 +1118,10 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
     row_caster_i[i].init(table_schema, field_or_var_list);
   }
 
+  // 创建线程池
+  MyThreadPool thread_pool(threads);
+  thread_pool.createPool();
+
   while (OB_SUCC(ret)) {   // 条件为假，表示整个文件数据都读取完了
     if (OB_FAIL(buffer_.squash())) {    
         LOG_WARN("fail to squash buffer", KR(ret));
@@ -1125,6 +1140,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("unexpected empty buffer", KR(ret));
     } else {
+      #if 0
       // 多线程读取buffer_中的数据
       // 现在buffer_里存储着小于等于2M的数据，先获取buffer_实际字节大小
       int64_t buffer_size = buffer_.get_data_size();
@@ -1152,6 +1168,52 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
       buffer_.set_end(buffer_i[threads-1].end_pos());
       // 每个线程将最终得到的datum_row写入external_sort_，得加锁
       // 注：虽然往external_sort_内写入记录的顺序改变了，但是存满1G后都要排序，所以写入顺序不是buffer_里原来的顺序，也没问题
+      #endif
+
+      #if 1
+      while (OB_SUCC(ret)) {
+        if (OB_FAIL(csv_parser_.get_next_row(buffer_, new_row))) {
+          if (OB_UNLIKELY(OB_ITER_END != ret)) {
+            LOG_WARN("fail to get next row", KR(ret));
+          } else {
+            ret = OB_SUCCESS;
+            break;
+          }
+        } else if (OB_FAIL(row_caster_.get_casted_row(*new_row, datum_row))) {
+          LOG_WARN("fail to cast row", KR(ret));
+        } else if (OB_FAIL(external_sort_.append_row(*datum_row))) {
+          LOG_WARN("fail to append row", KR(ret));
+        }
+      }
+      #endif
+
+      #if 0
+      // 多线程读取buffer_中的数据
+      // 现在buffer_里存储着小于等于2M的数据，先获取buffer_实际字节大小
+      int64_t buffer_size = buffer_.get_data_size();
+      // 给每个线程划分要读取的数据范围：起始点，终止点
+      std::istringstream is;
+      std::vector<std::pair<int64_t, int64_t>> read_pos = get_read_pos(&buffer_, threads, buffer_size, is);
+      // 将buffer_一分为8
+      // 在每个线程内，各自对数据进行get_next_row和get_casted_row操作
+      std::vector<std::thread> vec_thread;
+      // 创建任务
+      thread_pool.count_ = 0;
+      for (int i = 0; i < threads; ++i) {
+        buffer_i[i].set_data(buffer_.data());
+        buffer_i[i].set_begin(read_pos[i].first);
+        buffer_i[i].set_end(read_pos[i].first + read_pos[i].second);
+        buffer_i[i].set_threadID(i);
+        thread_pool.push_task(&thread_read_buffer, this, &buffer_i[i], &csv_parser_i[i], &row_caster_i[i]);
+      }
+      while (true) {
+        if (thread_pool.count_ == 8)
+          break;
+      }
+      buffer_.set_begin(buffer_i[threads-1].begin_pos());
+      buffer_.set_end(buffer_i[threads-1].end_pos());
+
+      #endif
     }
   }
   // out.close();
@@ -1186,6 +1248,107 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   }
   return ret;
 
+}
+
+// 其代表了每个线程池的线程始终在跑的循环，在无任务分配的时候阻塞在某个位置。
+void *WorkThread::start(void *arg) 
+{
+  //-获得执行对象
+  WorkThread *ee = (WorkThread *)arg;
+  while(true) {
+    //-加锁
+    pthread_mutex_lock(&(ee->pool_->mutex_));
+    while(ee->pool_->task_queue_.empty()) { //-如果任务队列为空，等待新任务
+      if(!ee->usable_) {
+        break;
+      }
+      pthread_cond_wait(&ee->pool_->cont_, &ee->pool_->mutex_);
+    }
+    if(!ee->usable_) {
+      pthread_mutex_unlock(&ee->pool_->mutex_);
+      break;
+    }
+    Task *task = ee->pool_->task_queue_.front();
+    ee->pool_->task_queue_.pop_front();
+    //-解锁
+    pthread_mutex_unlock(&(ee->pool_->mutex_));
+    //-执行任务回调
+    task->task_call_back(task);
+
+    pthread_mutex_lock(&(ee->pool_->mutex_));
+    ee->pool_->count_++;
+    pthread_mutex_unlock(&(ee->pool_->mutex_));
+  }
+  //-删除线程执行对象
+  delete ee;
+
+  return nullptr;
+}
+
+void MyThreadPool::createPool() 
+{
+  //-初始执行队列
+  for(int i = 0; i < thread_count_; ++i) {
+    WorkThread *ee = new WorkThread;
+    ee->pool_ = const_cast<MyThreadPool *>(this);
+    pthread_create(&(ee->tid_), NULL, ee->start, ee);
+    work_thread_queue_.push_back(ee);
+  }
+}
+
+
+void MyThreadPool::push_task(void(* tcb)(void *), 
+                              ObLoadDataDirectDemo *this_, 
+                              ObLoadDataBuffer *buffer_i, 
+                              ObLoadCSVPaser *csv_parser_i, 
+                              ObLoadRowCaster *row_caster_i) 
+{
+  Task *task = new Task;
+  task->setFunc(tcb);
+  task->_this_ = this_;
+  task->buffer_i_ = buffer_i;
+  task->csv_parser_i_ = csv_parser_i;
+  task->row_caster_i_ = row_caster_i;
+  //-加锁
+  pthread_mutex_lock(&mutex_);
+  task_queue_.push_back(task);
+  //-通知执行队列中的一个进行任务
+  pthread_cond_signal(&cont_);
+  //-解锁
+  pthread_mutex_unlock(&mutex_);
+}
+
+MyThreadPool::~MyThreadPool()
+{
+  for (int i = 0; i < work_thread_queue_.size(); ++i) {
+    work_thread_queue_[i]->usable_ = false;
+  }
+  pthread_mutex_lock(&mutex_);
+  //-清空任务队列
+  task_queue_.clear();
+  //-广播给每个执行线程令其退出(执行线程破开循环会free掉堆内存)
+  pthread_cond_broadcast(&cont_);
+  pthread_mutex_unlock(&mutex_);  //-让其他线程拿到锁
+  //-等待所有线程退出
+  // for (int i = 0; i < work_thread_queue_.size(); ++i) {
+  //   pthread_join(work_thread_queue_[i]->tid_, NULL);
+  // }
+  //-清空执行队列
+  work_thread_queue_.clear();
+  //-销毁锁和条件变量
+  pthread_cond_destroy(&cont_);
+  pthread_mutex_destroy(&mutex_);
+}
+
+//-线程执行的业务函数
+void execFunc(void *arg)
+{
+  Task *task = (Task *)arg;
+  ObLoadDataDirectDemo *this_ = task->_this_;
+  ObLoadDataBuffer *buffer_i = task->buffer_i_;
+  ObLoadCSVPaser *csv_parser_i = task->csv_parser_i_;
+  ObLoadRowCaster *row_caster_i = task->row_caster_i_;
+  // thread_read_buffer(this_, buffer_i, csv_parser_i, row_caster_i);
 }
 
 } // namespace sql
