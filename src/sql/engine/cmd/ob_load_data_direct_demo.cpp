@@ -1170,7 +1170,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
       // 注：虽然往external_sort_内写入记录的顺序改变了，但是存满1G后都要排序，所以写入顺序不是buffer_里原来的顺序，也没问题
       #endif
 
-      #if 1
+      #if 0
       while (OB_SUCC(ret)) {
         if (OB_FAIL(csv_parser_.get_next_row(buffer_, new_row))) {
           if (OB_UNLIKELY(OB_ITER_END != ret)) {
@@ -1187,7 +1187,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
       }
       #endif
 
-      #if 0
+      #if 1
       // 多线程读取buffer_中的数据
       // 现在buffer_里存储着小于等于2M的数据，先获取buffer_实际字节大小
       int64_t buffer_size = buffer_.get_data_size();
