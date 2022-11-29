@@ -283,12 +283,21 @@ class MyThreadPool : public ObThreadPool
   // static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
 public:
   MyThreadPool(int thread_count);
-  virtual ~MyThreadPool();
+  // virtual ~MyThreadPool();   // 笔记：不能自己定义析构函数，会覆盖父类的析构函数，得执行父类的析构函数  
+  /*
+  如何发现？通过调试，发现在load_data()结束时，cpu没有利用率，函数也没有退出，单步调试发现进入了我自己定义的thread_pool的析构函数内，线程阻塞了。
+  由此我就想到，我先前已经调用过mydestroy()了，这里就不需要在析构函数内继续释放，所以注释了析构函数内的内容，使得析构函数为空。
+  但结果发现还是不对，现象貌似是线程仍在阻塞休眠
+  由此我瞬间就想到，我是继承了ObThreadPool，那应该ObThreadPool类也需要相关的线程释放
+  所以我就注释了我自己的析构函数，让去调用ObThreadPool的析构函数
+  由此问题解决
+  */
   void createPool();
   void push_task(void(*tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
   // void push_task(void(* tcb)(void *, ObLoadCSVPaser *, ObLoadRowCaster *, ObLoadExternalSort *), ObLoadDataBuffer *buffer_i);
   int init(ObLoadDataStmt &load_stmt);
   void run1() override;
+  void mydestroy();
 
   std::deque<Task *> task_queue_;                // 任务队列
   std::deque<WorkThread *> work_thread_queue_;   // 执行线程队列 

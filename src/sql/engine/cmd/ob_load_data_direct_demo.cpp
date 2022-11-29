@@ -1009,7 +1009,7 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   return ret;
 }
 
-std::mutex mtx;
+pthread_mutex_t mtx;    // 在load_data()内初始化
 // void thread_read_buffer(void *arg, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i, ObLoadExternalSort *external_sort_i)
 void thread_read_buffer(void *arg)
 {
@@ -1049,13 +1049,13 @@ void thread_read_buffer(void *arg)
     } else if (OB_FAIL(row_caster_i->get_casted_row(*new_row, datum_row))) {   
       LOG_WARN("fail to cast row", KR(ret));
     } else {
-      mtx.lock();
+      pthread_mutex_lock(&mtx);
       // int64_t begin_pos = buffer_i->begin_pos();
       // char *str = buffer_i->begin();
       ret = this_->external_sort_.append_row(*datum_row);
       if (ret != OB_SUCCESS)
         LOG_INFO("liangman", KR(a), KR(buffer_i->threadID()));
-      mtx.unlock();
+      pthread_mutex_unlock(&mtx);
     } 
     // else if (OB_FAIL(external_sort_i->append_row(*datum_row))) {  // append_row()若用公用的this_->external_sort_，有问题，暂未解决
     //   LOG_WARN("fail to append row", KR(ret));
@@ -1112,7 +1112,9 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   const int threads = 7;    // 7个子线程用于并行解析buffer_里的数据(消费者), 一个主线程用于读取磁盘里的数据2M存储到buffer_里(生产者)
 
   // std::ofstream out("/root/1out.csv");
+  pthread_mutex_init(&mtx, nullptr);
 
+  #if 1
   // 初始化
   const ObLoadArgument &load_args = load_stmt.get_load_arguments();
   const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list = load_stmt.get_field_or_var_list(); 
@@ -1144,6 +1146,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   thread_pool.start();
   // thread_pool.init(load_stmt);
   // thread_pool.createPool();
+  #endif
 
   // LOG_INFO("liangman: start in 1135");
   while (OB_SUCC(ret)) {   // 条件为假，表示整个文件数据都读取完了
@@ -1237,9 +1240,12 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
         // thread_pool.push_task(&thread_read_buffer, &external_sort_i[i], &buffer_i[i], &csv_parser_i[i], &row_caster_i[i]);
         thread_pool.push_task(&thread_read_buffer, this, &buffer_i[i], &csv_parser_i[i], &row_caster_i[i]);
       }
-      while (true) {
-        if (thread_pool.count_ == threads)
+      while (1) {
+        usleep(500);   // 单位微妙   笔记：很奇特的bug，如果不延时一小会，会直接卡死在这里. 如何发现的？在这里打日志，发现运行正常，但日志放在if里面，就不正常了，考虑到打印日志需要时间，因此猜测要延时一会
+        if (thread_pool.count_ == threads) {
+          // LOG_INFO("liangman", KR(thread_pool.count_));
           break;
+        }
       }
       buffer_.set_begin(buffer_i[threads-1].begin_pos());
       buffer_.set_end(buffer_i[threads-1].end_pos());
@@ -1257,7 +1263,14 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
     }   
   }
   // out.close();
-  // 释放buffer_i、csv_parser_i、row_caster_i    TODO
+  // 释放buffer_i、csv_parser_i、row_caster_i    对象被销毁，会执行析构函数，执行释放操作
+  // for (int i = 0; i < threads; ++i) {
+  //   buffer_i[i].reset();
+  //   csv_parser_i[i].reset();
+  // }
+  thread_pool.mydestroy();
+  thread_pool.stop();
+  thread_pool.wait();
 
   // 对读取的所有数据进行外部排序
   if (OB_SUCC(ret)) {
@@ -1351,15 +1364,13 @@ void MyThreadPool::run1()
     }
     Task *task = task_queue_.front();
     task_queue_.pop_front();
-    // int pid = ee->pid_;
-    // ObLoadCSVPaser *csv_parser = &(ee->pool_->csv_parser_i_[pid]);
-    // ObLoadRowCaster *row_caster = &(ee->pool_->row_caster_i_[pid]);
-    // ObLoadExternalSort *external_sort = &(ee->pool_->external_sort_i_[pid]);
     //-解锁
     pthread_mutex_unlock(&mutex_);
     //-执行任务回调
     task->task_call_back(task);  
-    // task->task_call_back(task, csv_parser, row_caster, external_sort);
+
+    delete task;
+    task = nullptr;
 
     pthread_mutex_lock(&mutex_);
     count_++;
@@ -1428,6 +1439,26 @@ int MyThreadPool::init(ObLoadDataStmt &load_stmt)
   return ret;
 }
 
+void MyThreadPool::mydestroy()
+{
+  usable_ = false;
+  pthread_mutex_lock(&mutex_);
+  //-清空任务队列
+  task_queue_.clear();
+  //-广播给每个执行线程令其退出(执行线程破开循环会free掉堆内存)
+  pthread_cond_broadcast(&cont_);
+  pthread_mutex_unlock(&mutex_);  //-让其他线程拿到锁
+  //-等待所有线程退出
+  // for (int i = 0; i < work_thread_queue_.size(); ++i) {
+  //   pthread_join(work_thread_queue_[i]->tid_, NULL);
+  // }
+  //-清空执行队列
+  work_thread_queue_.clear();
+  //-销毁锁和条件变量
+  pthread_cond_destroy(&cont_);
+  pthread_mutex_destroy(&mutex_);
+}
+
 // MyThreadPool::MyThreadPool(int thread_count, ObLoadDataStmt &load_stmt)
 MyThreadPool::MyThreadPool(int thread_count)
 {
@@ -1437,6 +1468,7 @@ MyThreadPool::MyThreadPool(int thread_count)
   pthread_mutex_init(&mutex_, nullptr);
 }
 
+#if 0
 MyThreadPool::~MyThreadPool()
 {
   for (int i = 0; i < work_thread_queue_.size(); ++i) {
@@ -1459,6 +1491,7 @@ MyThreadPool::~MyThreadPool()
   pthread_cond_destroy(&cont_);
   pthread_mutex_destroy(&mutex_);
 }
+#endif
 
 } // namespace sql
 } // namespace oceanbase
