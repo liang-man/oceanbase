@@ -228,6 +228,7 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
 {
   static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
+  // static const int64_t FILE_BUFFER_SIZE = (1LL << 20); // 1M
 public:
   // friend void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
   // friend void thread_read_buffer(void *arg, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i, ObLoadExternalSort *external_sort_i);
@@ -304,8 +305,8 @@ public:
   int thread_count_;
   int count_;
   bool usable_ = true;
-  pthread_cond_t cont_;
-  pthread_mutex_t mutex_;
+  pthread_cond_t cont_, cont_master_;
+  pthread_mutex_t mutex_, mutex_master_;
   // ObLoadCSVPaser csv_parser_i_[7];
   // ObLoadRowCaster row_caster_i_[7];
   // ObLoadExternalSort external_sort_i_[7];

@@ -1109,7 +1109,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   const ObNewRow *new_row = nullptr;
   const ObLoadDatumRow *datum_row = nullptr;
 
-  const int threads = 7;    // 7个子线程用于并行解析buffer_里的数据(消费者), 一个主线程用于读取磁盘里的数据2M存储到buffer_里(生产者)
+  const int threads = 15;    // 7个子线程用于并行解析buffer_里的数据(消费者), 一个主线程用于读取磁盘里的数据2M存储到buffer_里(生产者)
 
   // std::ofstream out("/root/1out.csv");
   pthread_mutex_init(&mtx, nullptr);
@@ -1240,13 +1240,14 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
         // thread_pool.push_task(&thread_read_buffer, &external_sort_i[i], &buffer_i[i], &csv_parser_i[i], &row_caster_i[i]);
         thread_pool.push_task(&thread_read_buffer, this, &buffer_i[i], &csv_parser_i[i], &row_caster_i[i]);
       }
-      while (1) {
-        usleep(500);   // 单位微妙   笔记：很奇特的bug，如果不延时一小会，会直接卡死在这里. 如何发现的？在这里打日志，发现运行正常，但日志放在if里面，就不正常了，考虑到打印日志需要时间，因此猜测要延时一会
-        if (thread_pool.count_ == threads) {
-          // LOG_INFO("liangman", KR(thread_pool.count_));
-          break;
-        }
-      }
+      pthread_cond_wait(&thread_pool.cont_master_, &thread_pool.mutex_master_);
+      // while (1) {
+      //   usleep(500);   // 单位微妙   笔记：很奇特的bug，如果不延时一小会，会直接卡死在这里. 如何发现的？在这里打日志，发现运行正常，但日志放在if里面，就不正常了，考虑到打印日志需要时间，因此猜测要延时一会
+      //   if (thread_pool.count_ == threads) {
+      //     // LOG_INFO("liangman", KR(thread_pool.count_));
+      //     break;
+      //   }
+      // }
       buffer_.set_begin(buffer_i[threads-1].begin_pos());
       buffer_.set_end(buffer_i[threads-1].end_pos());
       // LOG_INFO("liangman: end in 1230");
@@ -1268,9 +1269,11 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   //   buffer_i[i].reset();
   //   csv_parser_i[i].reset();
   // }
+  #if 1
   thread_pool.mydestroy();
   thread_pool.stop();
   thread_pool.wait();
+  #endif
 
   // 对读取的所有数据进行外部排序
   if (OB_SUCC(ret)) {
@@ -1375,6 +1378,11 @@ void MyThreadPool::run1()
     pthread_mutex_lock(&mutex_);
     count_++;
     pthread_mutex_unlock(&mutex_);
+
+    pthread_mutex_lock(&mutex_master_);
+    if (count_ == thread_count_)
+      pthread_cond_signal(&cont_master_);
+    pthread_mutex_unlock(&mutex_master_);
   }
 }
 
@@ -1466,6 +1474,8 @@ MyThreadPool::MyThreadPool(int thread_count)
   count_ = 0;
   pthread_cond_init(&cont_, nullptr);
   pthread_mutex_init(&mutex_, nullptr);
+  pthread_cond_init(&cont_master_, nullptr);
+  pthread_mutex_init(&mutex_master_, nullptr);
 }
 
 #if 0
