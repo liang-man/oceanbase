@@ -1529,6 +1529,7 @@ int ObMemorySortRound<T, Compare>::build_fragment()
 
     start = common::ObTimeUtility::current_time();
     for (int64_t i = 0; OB_SUCC(ret) && i < item_list_.size(); ++i) {
+      int size = item_list_.size();
       if (OB_FAIL(next_round_->add_item(*item_list_.at(i)))) {
         STORAGE_LOG(WARN, "fail to add item", K(ret));
       }

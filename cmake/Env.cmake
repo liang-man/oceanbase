@@ -53,7 +53,10 @@ if(NOT OB_BUILD_CDC)
   add_definitions(-DENABLE_INITIAL_EXEC_TLS_MODEL)
 endif()
 
+<<<<<<< HEAD
 # RioChen-添加ccache
+=======
+>>>>>>> main
 if (OB_USE_CCACHE)
   find_program(OB_CCACHE ccache
     PATHS "${DEVTOOLS_DIR}/bin"
