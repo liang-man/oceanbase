@@ -29,6 +29,8 @@ public:
   }
 };
 
+pthread_mutex_t mtx_append, mtx_init;    // 在load_data()内初始化
+
 // 从文件里读到数据，存储在buffer里面
 class ObLoadDataBuffer
 {
@@ -56,13 +58,20 @@ public:
   OB_INLINE int threadID() const { return thread_ID_; }
   OB_INLINE int64_t begin_pos() const { return begin_pos_; }
   OB_INLINE int64_t end_pos() const { return end_pos_; }
+  OB_INLINE bool is_used() const { return is_used_; }
+  OB_INLINE void set_used(bool flag) { is_used_ = flag; }
+  // OB_INLINE int get_surplus() const { return surplus_; }
+  // OB_INLINE void set_surplus(int val) { surplus_ = val; }
 private:
   common::ObArenaAllocator allocator_;
   char *data_;
   int64_t begin_pos_;
   int64_t end_pos_;
   int64_t capacity_;
-  int thread_ID_ = -1;              // liangman
+  int thread_ID_ = -1;        // liangman
+  bool is_used_ = false;      // liangman   默认为false，表示没有被使用  注：被使用是指buffer里存储了数据，而不是在任务队列被线程调用
+  // 这个变量得作为全局变量，让所有buffer都能访问到
+  // int surplus_ = 0;           // liangmna   记录固定读取2M的buffer中，多出了的部分字节，构不成一个完整的行
 };
 
 // 读本地文件
@@ -260,12 +269,10 @@ class Task {
 public:
   // void (*task_call_back)(void *, ObLoadCSVPaser *, ObLoadRowCaster *, ObLoadExternalSort *);
   void (*task_call_back)(void *);
+  ObLoadDataBuffer *buffer_; 
+  ObLoadCSVPaser *csv_parser_; 
+  ObLoadRowCaster *row_caster_;
   ObLoadDataDirectDemo *_this_; 
-  ObLoadDataBuffer *buffer_i_; 
-  ObLoadCSVPaser *csv_parser_i_; 
-  ObLoadRowCaster *row_caster_i_;
-  // ObLoadDataBuffer *buffer;
-  // void setFunc(void (*tcb)(void *, ObLoadCSVPaser *, ObLoadRowCaster *, ObLoadExternalSort *)) { task_call_back = tcb; }
   void setFunc(void (*tcb)(void *)) { task_call_back = tcb; }
 };
 
@@ -294,8 +301,8 @@ public:
   由此问题解决
   */
   void createPool();
-  void push_task(void(*tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
-  // void push_task(void(* tcb)(void *, ObLoadCSVPaser *, ObLoadRowCaster *, ObLoadExternalSort *), ObLoadDataBuffer *buffer_i);
+  // void push_task(void(*tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
+  void push_task(void(* tcb)(void *), ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadDataDirectDemo *this_);
   int init(ObLoadDataStmt &load_stmt);
   void run1() override;
   void mydestroy();
@@ -304,12 +311,49 @@ public:
   std::deque<WorkThread *> work_thread_queue_;   // 执行线程队列 
   int thread_count_;
   int count_;
+  int task_num_;        // 任务队列中任务个数上限
+  bool master_sleep_;   // 标志主线程状态，true表示睡眠，false表示活跃，初始化为false
   bool usable_ = true;
-  pthread_cond_t cont_, cont_master_;
-  pthread_mutex_t mutex_, mutex_master_;
+  pthread_cond_t cont_, cont_master_, cont_complete_;
+  pthread_mutex_t mutex_, mutex_master_, mutex_complete_;
   // ObLoadCSVPaser csv_parser_i_[7];
   // ObLoadRowCaster row_caster_i_[7];
   // ObLoadExternalSort external_sort_i_[7];
+};
+
+template<int ObjectSize, int NumofObjects = 20>
+class MemPool {
+public:
+  MemPool() {
+    freeNodeHeader = nullptr;
+    memBlockHeader = nullptr;
+  }
+
+  ~MemPool() {
+    MemBlock *ptr;
+    while (memBlockHeader) {
+      ptr = memBlockHeader->pNext;
+      delete memBlockHeader;
+      memBlockHeader = ptr;
+    }
+  }
+  void *myMalloc();
+  void myFree(void *);
+private:
+	//空闲节点结构体
+	struct FreeNode {
+		FreeNode *pNext;
+		char data[ObjectSize];
+	};
+
+	//内存块结构体
+	struct MemBlock{
+		MemBlock *pNext;
+		FreeNode data[NumofObjects];
+	};
+
+	FreeNode *freeNodeHeader;
+	MemBlock *memBlockHeader;
 };
 
 } // namespace sql
