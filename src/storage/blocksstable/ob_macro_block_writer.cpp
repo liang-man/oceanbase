@@ -905,12 +905,14 @@ int ObMacroBlockWriter::build_micro_block_desc_with_rewrite(
 int ObMacroBlockWriter::write_micro_block(ObMicroBlockDesc &micro_block_desc)
 {
   int ret = OB_SUCCESS;
+
   int64_t data_offset = 0;
   if (OB_FAIL(alloc_block())) {
     STORAGE_LOG(WARN, "Fail to pre-alloc block", K(ret));
   } else if (OB_NOT_NULL(builder_)) {
     // we use builder_->append_row() to judge whether the micro_block can be added
     // only used to write data block
+    
     micro_block_desc.macro_id_ = ObIndexBlockRowHeader::DEFAULT_IDX_ROW_MACRO_ID;
     micro_block_desc.block_offset_ = macro_blocks_[current_index_].get_data_size();
     if (OB_FAIL(builder_->append_row(micro_block_desc, macro_blocks_[current_index_]))) {

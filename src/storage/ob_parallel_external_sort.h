@@ -1778,7 +1778,7 @@ int ObExternalSort<T, Compare>::do_sort(const bool final_merge)
     is_empty_ = false;
   } else if (0 == curr_round_->get_fragment_count()) {
     is_empty_ = true;
-    ret = common::OB_SUCCESS;
+    ret = common::OB_SUCCESS; 
   } else {
     // final_merge = true is for performance optimization, the count of fragments is reduced to lower than merge_count_per_round,
     // then the last round of merge this fragment is skipped

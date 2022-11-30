@@ -326,6 +326,7 @@ tools/ob-configserver/bin/*
 tools/ob-configserver/tests/*.log
 tools/ob-configserver/tests/*.out
 
+
 ############# deps #############
 deps/oblib/src/common/storage/ob_io_selector.h
 deps/3rd
