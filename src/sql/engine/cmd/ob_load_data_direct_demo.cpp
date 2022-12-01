@@ -1489,7 +1489,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 
   pthread_mutex_init(&mtx_append, nullptr);
 
-  const int threads = 16;    // 7个子线程用于并行解析buffer_里的数据(消费者), 一个主线程用于读取磁盘里的数据2M存储到buffer_里(生产者)
+  const int threads = 16;    // 16个子线程用于并行解析buffer_里的数据(消费者), 一个主线程用于读取磁盘里的数据2M存储到buffer_里(生产者)
 
   // 获取csv文件大小，单位字节
   int file_fd = file_reader_.get_file_fd();
@@ -1501,7 +1501,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   int64_t index = file_size / threads;
   int64_t length = index;          // 每段区间固定长度
   char *read_buf = (char *)malloc(sizeof(char) * 1);;    // 一次只读1个字节  注意：得动态分配内存，不能初始化为nullptr 思考：这两个有什么不同？
-  file_sections[0].begin = 0;
+  file_sections[0].begin = 1;     // 笔记：这块不能是0，因为在thread_read_buffer函数那里会对begin减1，若为0，减1为-1，就导致第一大块没有读，直接跳过了
   for (int th = 0; th < threads; ++th) {
     lseek(file_fd, index, SEEK_SET);
     for (int i = 0; i < 500; ++i) {     // 文件的一个完整行长度不超过500字节
