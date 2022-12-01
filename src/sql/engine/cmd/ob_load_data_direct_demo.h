@@ -30,7 +30,7 @@ public:
 };
 
 // liangman
-pthread_mutex_t mtx_append, mtx_init;    // 在load_data()内初始化
+pthread_mutex_t mtx_append[16];    // 在load_data()内初始化
 
 // liangman
 struct Offset {
@@ -281,6 +281,7 @@ public:
   ObLoadDataBuffer *buffer_;
   ObLoadCSVPaser *csv_parser_; 
   ObLoadRowCaster *row_caster_;
+  ObLoadExternalSort *external_sorts_;
   ObLoadExternalSort *external_sort_;
   Offset *offset_;
 
@@ -310,7 +311,8 @@ public:
   由此问题解决
   */
   void createPool();
-  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, Offset *offset);
+  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadExternalSort external_sorts[16], Offset *offset);
+  void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort);
   int init(ObLoadDataStmt &load_stmt);
   void run1() override;
   void mydestroy();
