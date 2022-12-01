@@ -29,7 +29,14 @@ public:
   }
 };
 
+// liangman
 pthread_mutex_t mtx_append, mtx_init;    // 在load_data()内初始化
+
+// liangman
+struct Offset {
+  int64_t begin;
+  int64_t end;
+};
 
 // 从文件里读到数据，存储在buffer里面
 class ObLoadDataBuffer
@@ -81,7 +88,8 @@ public:
   ObLoadSequentialFileReader();
   ~ObLoadSequentialFileReader();
   int open(const ObString &filepath);
-  int read_next_buffer(ObLoadDataBuffer &buffer);
+  int read_next_buffer(ObLoadDataBuffer &buffer, Offset *offset, int64_t &section_offset);
+  int get_file_fd(){ return file_reader_.get_file_fd();}
 private:
   common::ObFileReader file_reader_;
   int64_t offset_;
@@ -269,10 +277,13 @@ class Task {
 public:
   // void (*task_call_back)(void *, ObLoadCSVPaser *, ObLoadRowCaster *, ObLoadExternalSort *);
   void (*task_call_back)(void *);
-  ObLoadDataBuffer *buffer_; 
+  ObLoadDataDirectDemo *_this_; 
+  ObLoadDataBuffer *buffer_;
   ObLoadCSVPaser *csv_parser_; 
   ObLoadRowCaster *row_caster_;
-  ObLoadDataDirectDemo *_this_; 
+  ObLoadExternalSort *external_sort_;
+  Offset *offset_;
+
   void setFunc(void (*tcb)(void *)) { task_call_back = tcb; }
 };
 
@@ -287,8 +298,6 @@ public:
 
 class MyThreadPool : public ObThreadPool
 {
-  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
-  // static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
 public:
   MyThreadPool(int thread_count);
   // virtual ~MyThreadPool();   // 笔记：不能自己定义析构函数，会覆盖父类的析构函数，得执行父类的析构函数  
@@ -301,8 +310,7 @@ public:
   由此问题解决
   */
   void createPool();
-  // void push_task(void(*tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
-  void push_task(void(* tcb)(void *), ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadDataDirectDemo *this_);
+  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, Offset *offset);
   int init(ObLoadDataStmt &load_stmt);
   void run1() override;
   void mydestroy();
@@ -316,44 +324,6 @@ public:
   bool usable_ = true;
   pthread_cond_t cont_, cont_master_, cont_complete_;
   pthread_mutex_t mutex_, mutex_master_, mutex_complete_;
-  // ObLoadCSVPaser csv_parser_i_[7];
-  // ObLoadRowCaster row_caster_i_[7];
-  // ObLoadExternalSort external_sort_i_[7];
-};
-
-template<int ObjectSize, int NumofObjects = 20>
-class MemPool {
-public:
-  MemPool() {
-    freeNodeHeader = nullptr;
-    memBlockHeader = nullptr;
-  }
-
-  ~MemPool() {
-    MemBlock *ptr;
-    while (memBlockHeader) {
-      ptr = memBlockHeader->pNext;
-      delete memBlockHeader;
-      memBlockHeader = ptr;
-    }
-  }
-  void *myMalloc();
-  void myFree(void *);
-private:
-	//空闲节点结构体
-	struct FreeNode {
-		FreeNode *pNext;
-		char data[ObjectSize];
-	};
-
-	//内存块结构体
-	struct MemBlock{
-		MemBlock *pNext;
-		FreeNode data[NumofObjects];
-	};
-
-	FreeNode *freeNodeHeader;
-	MemBlock *memBlockHeader;
 };
 
 } // namespace sql

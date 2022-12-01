@@ -21,8 +21,9 @@
 #include <atomic>
 #include <deque>
 #include "share/ob_thread_pool.h"
+#include <sys/stat.h>
+#include <unistd.h>
 // #include <sys/sysinfo.h>
-// #include <unistd.h>
 
 std::mutex mtx;
 
@@ -92,6 +93,7 @@ int myEND = 0;
 char *myDATA = nullptr;  // 保存上一个buffer的数据，供读取下一个buffer使用
 bool myFIRST = true;
 int muSIZE = 0;
+#if 0
 int ObLoadDataBuffer::squash()
 {
   int ret = OB_SUCCESS;
@@ -110,6 +112,24 @@ int ObLoadDataBuffer::squash()
     begin_pos_ = myBEGIN;
     end_pos_ = myEND;
     // sem_wait(semLock);   // 凡是修改、调用公共量，都得加锁
+    const int64_t data_size = get_data_size();   // data_size一开始为0  执行end_pos_ - begin_pos_
+    if (data_size > 0) {
+      MEMMOVE(data_, data_ + begin_pos_, data_size);
+    }
+    begin_pos_ = 0;
+    end_pos_ = data_size;
+  }
+  return ret;
+}
+#endif
+
+int ObLoadDataBuffer::squash()
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(nullptr == data_)) {
+    ret = OB_NOT_INIT;
+    LOG_WARN("ObLoadDataBuffer not init", KR(ret), KP(this));
+  } else {
     const int64_t data_size = get_data_size();   // data_size一开始为0  执行end_pos_ - begin_pos_
     if (data_size > 0) {
       MEMMOVE(data_, data_ + begin_pos_, data_size);
@@ -142,6 +162,7 @@ int ObLoadSequentialFileReader::open(const ObString &filepath)
   return ret;
 }
 
+#if 0
 int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer)
 {
   // sem_wait(semLock);
@@ -190,6 +211,43 @@ int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer)
   }
   // sem_post(semLock);
   // mtx.unlock();
+  return ret;
+}
+#endif
+
+int ObLoadSequentialFileReader::read_next_buffer(ObLoadDataBuffer &buffer, Offset *offset, int64_t &section_offset)
+{
+  int ret = OB_SUCCESS;
+  if (OB_UNLIKELY(!file_reader_.is_opened())) {
+    ret = OB_FILE_NOT_OPENED;
+    LOG_WARN("file not opened", KR(ret));
+  } else if (is_read_end_) {
+    ret = OB_ITER_END;
+  } else if (OB_LIKELY(buffer.get_remain_size() > 0)) {
+    int64_t buffer_remain_size = buffer.get_remain_size();   // buffer_remain_size一开始为2097152，即2M 
+    int64_t read_size = 0;
+    if (section_offset == offset->end) {    // 到达文件末尾
+      // is_read_end_ = true;    // 不能设置为true，因为就一个file_reader_，若当前线程读完设置为true，那么其他线程就没法读了
+      ret = OB_ITER_END;
+      return ret;
+    }
+    if (section_offset + buffer_remain_size > offset->end) {
+      buffer_remain_size = offset->end - section_offset;
+    }
+    if (OB_FAIL(file_reader_.pread(buffer.end(), buffer_remain_size, section_offset, read_size))) {   // 读取2M的数据
+      LOG_WARN("fail to do pread", KR(ret));
+    } else if (read_size == 0) {   // 只有到达文件末尾才会为0
+      is_read_end_ = true;
+      ret = OB_ITER_END;
+    } else {
+      // 这个offset_就是下一轮2M数据的起点
+      // offset_是一个公共量，多线程修改时要加锁
+      // offset_ += read_size;        // 只要csv文件超过2M，那么这个read_size基本上都是2097152
+      buffer.produce(read_size);   // 执行end_pos_ += read_size
+      section_offset += read_size;
+    }
+  }
+
   return ret;
 }
 
@@ -1034,7 +1092,8 @@ int ObLoadDataDirectDemo::inner_init(ObLoadDataStmt &load_stmt)
   return ret;
 }
 
-// void thread_read_buffer(void *arg, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i, ObLoadExternalSort *external_sort_i)
+// v1 多线程各自处理buffer，但是读buffer还是主线程一个在读
+#if 0
 void thread_read_buffer(void *arg)
 {
   #if 0   // 输出成文件
@@ -1103,6 +1162,67 @@ void thread_read_buffer(void *arg)
   // 该线程处理buffer结束了，因此该buffer可以被标记为空闲了
   buffer->set_used(false);
 }
+#endif
+
+// v2  全流程都用多线程
+#if 1
+void thread_read_buffer(void *arg)
+{
+  int ret = OB_SUCCESS;
+  const ObNewRow *new_row = nullptr;
+  const ObLoadDatumRow *datum_row = nullptr;
+  Task *task = (Task *)arg;
+  ObLoadDataDirectDemo *this_ = task->_this_;
+  ObLoadDataBuffer *buffer = task->buffer_;
+  ObLoadCSVPaser *csv_parser = task->csv_parser_;
+  ObLoadRowCaster *row_caster = task->row_caster_;
+  // ObLoadExternalSort *external_sort = task->external_sort_;
+  Offset *offset = task->offset_;
+  // 笔记：这里read_next_buffer()里的pread()函数，是从当前偏移的下一个字符开始读，就像read()一样,所以要减1
+  int64_t section_offset = offset->begin - 1; // 当前线程负责的文件起始偏移
+
+  while (OB_SUCC(ret)) {  
+    if (OB_FAIL(buffer->squash())) {    
+      LOG_WARN("fail to squash buffer", KR(ret));
+    } else if (OB_FAIL(this_->file_reader_.read_next_buffer(*buffer, offset, section_offset))) {  
+      if (OB_UNLIKELY(OB_ITER_END != ret)) {
+        LOG_WARN("fail to read next buffer", KR(ret));
+      } else {
+        if (OB_UNLIKELY(!buffer->empty())) {
+          ret = OB_ERR_UNEXPECTED;
+          LOG_WARN("unexpected incomplate data", KR(ret));
+        }
+        ret = OB_SUCCESS;
+        break;               // 这里表示全部数据读完，要退出函数了  
+      }
+    } else if (OB_UNLIKELY(buffer->empty())) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("unexpected empty buffer", KR(ret));
+    } else {
+      while (OB_SUCC(ret)) {
+        // 笔记：csv_parser_不能公用，得一个buffer一个csv_parser, row_caster_同理.
+        if (OB_FAIL(csv_parser->get_next_row(*buffer, new_row))) {   
+          if (OB_UNLIKELY(OB_ITER_END != ret)) {
+            LOG_WARN("fail to get next row", KR(ret));
+          } else {
+            ret = OB_SUCCESS;
+            break;             // 这里表示一个buffer中的数据读完，要开始读取下一个buffer
+          }
+        } else if (OB_FAIL(row_caster->get_casted_row(*new_row, datum_row))) {   
+          LOG_WARN("fail to cast row", KR(ret));
+        } else {
+          pthread_mutex_lock(&mtx_append);
+          ret = this_->external_sort_.append_row(*datum_row);
+          pthread_mutex_unlock(&mtx_append);
+        } 
+        // else if (OB_FAIL(external_sort->append_row(*datum_row))) {  // append_row()若用公用的this_->external_sort_，有问题，暂未解决
+        //   LOG_WARN("fail to append row", KR(ret));
+        // }
+      }
+    }
+  }
+}
+#endif
 
 std::vector<std::pair<int64_t, int64_t>> get_read_pos(ObLoadDataBuffer *buffer, int threads, int64_t length, std::istringstream &is)
 {
@@ -1127,9 +1247,8 @@ std::vector<std::pair<int64_t, int64_t>> get_read_pos(ObLoadDataBuffer *buffer, 
 	return res;
 }
 
-// 定义内存池对象
-MemPool<sizeof(ObLoadDataBuffer), 15> memory_pool;
-
+// v1
+#if 0
 int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 {
   int ret = OB_SUCCESS;
@@ -1169,32 +1288,6 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
     row_casters[i]->init(table_schema, field_or_var_list);
   }
 
-  // 初始化
-  #if 0
-  const ObLoadArgument &load_args = load_stmt.get_load_arguments();
-  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list = load_stmt.get_field_or_var_list(); 
-  const uint64_t tenant_id = load_args.tenant_id_;
-  const uint64_t table_id = load_args.table_id_;
-  ObSchemaGetterGuard schema_guard;
-  const ObTableSchema *table_schema = nullptr;
-  ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id, schema_guard);
-  schema_guard.get_table_schema(tenant_id, table_id, table_schema);
-  ObLoadDataBuffer buffer_i[threads];     // buffer_i是分配的动态内存，最后需要手动释放
-  ObLoadCSVPaser csv_parser_i[threads];   // csv_parser_i也是动态分配的内存，到init()函数内看到
-  ObLoadRowCaster row_caster_i[threads];
-  // ObLoadExternalSort external_sort_i[threads];
-  for (int i = 0; i < threads; ++i) {
-    // 初始化buffer
-    buffer_i[i].create(FILE_BUFFER_SIZE);
-    // 初始化csv_parser
-    csv_parser_i[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(), load_args.file_cs_type_);
-    // 初始化row_caster
-    row_caster_i[i].init(table_schema, field_or_var_list);
-    // 初始化external_sort_
-    // external_sort_i[i].init(table_schema, MEM_BUFFER_SIZE, FILE_BUFFER_SIZE);
-  }
-  #endif
-
   // 创建线程池
   MyThreadPool thread_pool(threads);
   thread_pool.set_thread_count(threads);
@@ -1222,7 +1315,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
       continue;
     // 开始处理
     if (OB_FAIL(buffer_target->squash())) {    
-        LOG_WARN("fail to squash buffer", KR(ret));
+      LOG_WARN("fail to squash buffer", KR(ret));
     } else if (OB_FAIL(file_reader_.read_next_buffer(*buffer_target))) {  
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to read next buffer", KR(ret));
@@ -1338,7 +1431,6 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
         thread_pool.master_sleep_ = true;
         pthread_cond_wait(&thread_pool.cont_master_, &thread_pool.mutex_master_);  
       }
-
       #endif
     }   
   }
@@ -1363,6 +1455,117 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
     }
     // for (int i = 0; i < threads; ++i)
     //   external_sort_i[i].close();
+  }
+  // 将排序好的记录，存储为SSTable
+  while (OB_SUCC(ret)) {      // 有多少行记录，循环多少次
+    if (OB_FAIL(external_sort_.get_next_row(datum_row))) {    
+      if (OB_UNLIKELY(OB_ITER_END != ret)) {
+        LOG_WARN("fail to get next row", KR(ret));
+      } else {
+        ret = OB_SUCCESS;
+        break;
+      }
+    } else if (OB_FAIL(sstable_writer_.append_row(*datum_row))) {  
+      LOG_WARN("fail to append row", KR(ret));
+    }
+  }
+  // close()就是把内存中的数据刷到宏块上，同时把刷出来的宏快丢给sstable_index_build去，之后就是构造sstable了
+  if (OB_SUCC(ret)) {
+    if (OB_FAIL(sstable_writer_.close())) {
+      LOG_WARN("fail to close sstable writer", KR(ret));
+    }
+  }
+  return ret;
+}
+
+#endif
+
+// v2 文件读取部分，多线程全流程处理
+int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
+{
+  int ret = OB_SUCCESS;
+  const ObNewRow *new_row = nullptr;
+  const ObLoadDatumRow *datum_row = nullptr;
+
+  pthread_mutex_init(&mtx_append, nullptr);
+
+  const int threads = 16;    // 7个子线程用于并行解析buffer_里的数据(消费者), 一个主线程用于读取磁盘里的数据2M存储到buffer_里(生产者)
+
+  // 获取csv文件大小，单位字节
+  int file_fd = file_reader_.get_file_fd();
+  struct stat statbuf;
+  fstat(file_fd, &statbuf);
+  int64_t file_size = statbuf.st_size;
+  // 给每个线程划分要读取的数据范围：起始点，终止点
+  Offset file_sections[threads];
+  int64_t index = file_size / threads;
+  int64_t length = index;          // 每段区间固定长度
+  char *read_buf = (char *)malloc(sizeof(char) * 1);;    // 一次只读1个字节  注意：得动态分配内存，不能初始化为nullptr 思考：这两个有什么不同？
+  file_sections[0].begin = 0;
+  for (int th = 0; th < threads; ++th) {
+    lseek(file_fd, index, SEEK_SET);
+    for (int i = 0; i < 500; ++i) {     // 文件的一个完整行长度不超过500字节
+      read(file_fd, read_buf, 1);       // read是从当前偏移的下一个字节开始读
+      index++;
+      if (*read_buf == '\n') {
+        file_sections[th].end = index;
+        break;
+      }
+    }
+    if (th != threads - 1)
+      file_sections[th + 1].begin = index + 1;
+    index += length;    // 到达下一个区间的末尾位置
+  }
+  file_sections[threads - 1].end = file_size;
+  lseek(file_fd, 0, SEEK_SET);
+
+  // 预先创建线程个数个buffer、csv_parser、row_caster、external_sort
+  // 不要把csv_parsers和row_casters初始化在线程函数内，好处是①不用加锁，可以加快速度；②不用每次都初始化一次，可以加快速度
+  const ObLoadArgument &load_args = load_stmt.get_load_arguments();
+  const ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list = load_stmt.get_field_or_var_list(); 
+  const uint64_t tenant_id = load_args.tenant_id_;
+  const uint64_t table_id = load_args.table_id_;
+  ObSchemaGetterGuard schema_guard;
+  const ObTableSchema *table_schema = nullptr;
+  ObMultiVersionSchemaService::get_instance().get_tenant_schema_guard(tenant_id, schema_guard);
+  schema_guard.get_table_schema(tenant_id, table_id, table_schema);
+  ObLoadDataBuffer buffers[threads];
+  ObLoadCSVPaser csv_parsers[threads];
+  ObLoadRowCaster row_casters[threads];
+  // ObLoadExternalSort external_sorts[threads];
+  for (int i = 0; i < threads; ++i) {
+    buffers[i].create(FILE_BUFFER_SIZE);   // 这是给ObLoadDataBuffer类中的data_属性分配2M大小的动态内存
+    buffers[i].set_threadID(i);
+    csv_parsers[i].init(load_stmt.get_data_struct_in_file(), field_or_var_list.count(), load_args.file_cs_type_);
+    row_casters[i].init(table_schema, field_or_var_list);
+    // external_sorts[i].init(table_schema, MEM_BUFFER_SIZE, FILE_BUFFER_SIZE);
+  }
+
+  // 创建线程池
+  MyThreadPool thread_pool(threads);
+  thread_pool.set_thread_count(threads);
+  thread_pool.set_run_wrapper(MTL_CTX());
+  thread_pool.start();
+  // thread_pool.init(load_stmt);
+  // thread_pool.createPool();
+ 
+  // 多个线程全流程处理
+  for (int i = 0; i < threads; ++i) {
+    thread_pool.push_task(&thread_read_buffer, this, &buffers[i], &csv_parsers[i], &row_casters[i], &file_sections[i]);
+  }
+  pthread_cond_wait(&thread_pool.cont_complete_, &thread_pool.mutex_complete_);  
+
+  thread_pool.mydestroy();
+  thread_pool.stop();
+  thread_pool.wait();
+
+  // 对读取的所有数据进行外部排序
+  if (OB_SUCC(ret)) {
+    if (OB_FAIL(external_sort_.close())) {   // 进行merge_sort排序
+      LOG_WARN("fail to close external sort", KR(ret));
+    }
+    // for (int i = 0; i < threads; ++i)
+    //   external_sorts[i].close();
   }
   // 将排序好的记录，存储为SSTable
   while (OB_SUCC(ret)) {      // 有多少行记录，循环多少次
@@ -1426,6 +1629,7 @@ void *WorkThread::start(void *arg)
   return nullptr;
 }
 
+#if 0
 void MyThreadPool::run1()
 {
   ObTenantStatEstGuard stat_est_guard(MTL_ID());
@@ -1481,6 +1685,50 @@ void MyThreadPool::run1()
     // pthread_mutex_unlock(&mutex_master_);
   }
 }
+#endif
+
+void MyThreadPool::run1()
+{
+  ObTenantStatEstGuard stat_est_guard(MTL_ID());
+  ObTenantBase *tenant_base = MTL_CTX();
+  Worker::CompatMode mode = ((ObTenant *)tenant_base)->get_compat_mode();
+  Worker::set_compatibility_mode(mode);
+
+  while(true) {
+    //-加锁
+    pthread_mutex_lock(&mutex_);
+    while(task_queue_.empty()) { //-如果任务队列为空，等待新任务
+      if(!usable_) {
+        break;
+      }
+      pthread_cond_wait(&cont_, &mutex_);
+    }
+    if(!usable_) {
+      pthread_mutex_unlock(&mutex_);
+      break;
+    }
+    Task *task = task_queue_.front();
+    task_queue_.pop_front();
+    //-解锁
+    pthread_mutex_unlock(&mutex_);
+    //-执行任务回调
+    task->task_call_back(task);  
+
+    // 任务执行完毕，销毁任务
+    delete task;
+    task = nullptr;
+
+    // 用于主线程等待子线程的标志位、唤醒的操作
+    pthread_mutex_lock(&mutex_);
+    count_++;
+    pthread_mutex_unlock(&mutex_);
+
+    pthread_mutex_lock(&mutex_complete_);
+    if (count_ == thread_count_)
+      pthread_cond_signal(&cont_complete_);
+    pthread_mutex_unlock(&mutex_complete_);
+  }
+}
 
 void MyThreadPool::createPool() 
 {
@@ -1494,24 +1742,17 @@ void MyThreadPool::createPool()
   }
 }
 
-// 传入csv_parser_i数组，具体选哪个,由被唤醒的线程pid去选择
-// 因此Task里属性就不能是单个csv_parser_i，而是一个数组了
-// void MyThreadPool::push_task(void(* tcb)(void *), 
-//                               ObLoadDataDirectDemo *this_, 
-//                               ObLoadDataBuffer *buffer_i, 
-//                               ObLoadCSVPaser *csv_parser_i, 
-//                               ObLoadRowCaster *row_caster_i) 
-void MyThreadPool::push_task(void(* tcb)(void *), ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadDataDirectDemo *this_)
+void MyThreadPool::push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, Offset *offset)
 {
   Task *task = new Task;
   task->setFunc(tcb);
+  task->_this_ = this_;
   task->buffer_ = buffer;
   task->csv_parser_ = csv_parser;
   task->row_caster_ = row_caster;
-  task->_this_ = this_;
-  // task->csv_parser_i_ = csv_parser_i;
-  // task->row_caster_i_ = row_caster_i;
-  // task->buffer = buffer_i;
+  // task->external_sort_ = external_sort;
+  task->offset_ = offset;
+
   //-加锁
   pthread_mutex_lock(&mutex_);
   task_queue_.push_back(task);
@@ -1605,47 +1846,6 @@ MyThreadPool::~MyThreadPool()
   pthread_mutex_destroy(&mutex_);
 }
 #endif
-
-// 分配空闲的结点。
-template<int ObjectSize, int NumofObjects>
-void *MemPool<ObjectSize, NumofObjects>::myMalloc() 
-{
-	// 无空闲节点，申请新内存块
-	if (freeNodeHeader == nullptr) {
-		MemBlock *newBlock = new MemBlock;
-		newBlock->pNext = nullptr;
-
-		freeNodeHeader = &newBlock->data[0];	 //设置内存块的第一个节点为空闲节点链表的首节点
-		//将内存块的其它节点串起来
-		for (int i = 1; i < NumofObjects; ++i) {
-			newBlock->data[i - 1].pNext = &newBlock->data[i];
-		}
-		newBlock->data[NumofObjects - 1].pNext = nullptr;
-
-		// 首次申请内存块
-		if (memBlockHeader == nullptr) {
-			memBlockHeader = newBlock;
-		} else {
-			// 将新内存块加入到内存块链表。
-			newBlock->pNext = memBlockHeader;
-			memBlockHeader = newBlock;
-		}
-	}
-	// 返回空节点闲链表的第一个节点。
-	void *freeNode = freeNodeHeader;
-	freeNodeHeader = freeNodeHeader->pNext;
-
-	return freeNode;
-}
-
-// 释放已经分配的结点。
-template<int ObjectSize, int NumofObjects>
-void MemPool<ObjectSize, NumofObjects>::myFree(void *p) 
-{
-	FreeNode *pNode = (FreeNode*)p;
-	pNode->pNext = freeNodeHeader;	//将释放的节点插入空闲节点头部
-	freeNodeHeader = pNode;
-}
 
 } // namespace sql
 } // namespace oceanbase
