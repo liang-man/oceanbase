@@ -217,12 +217,16 @@ class ObLoadSSTableWriter
 public:
   ObLoadSSTableWriter();
   ~ObLoadSSTableWriter();
+  // int init(const share::schema::ObTableSchema *table_schema, blocksstable::ObMacroBlockWriter *macro_block_writers_[]);   // 初始化时用这个初始化就行
+  // int append_row(const ObLoadDatumRow &datum_row, blocksstable::ObMacroBlockWriter *macro_block_writers_[], int id);    // 往macro_block_writer里写数据时，调用这个函数就行
+  // int close(blocksstable::ObMacroBlockWriter *macro_block_writers_[], int index);
   int init(const share::schema::ObTableSchema *table_schema);   // 初始化时用这个初始化就行
   int append_row(const ObLoadDatumRow &datum_row);    // 往macro_block_writer里写数据时，调用这个函数就行
   int close();
 private:
   int init_sstable_index_builder(const share::schema::ObTableSchema *table_schema);   // 构造一个sstable_index_build，用于记录每个sstable的索引
-  int init_macro_block_writer(const share::schema::ObTableSchema *table_schema);   // 构造一个macro_block_writer，后面就是一直调用append_row()往里面塞数据。因为是单线程，所以只创建了一个writer，多线程可以创建多个
+  // int init_macro_block_writer(const share::schema::ObTableSchema *table_schema, blocksstable::ObMacroBlockWriter *macro_block_writers_[]);   // 构造一个macro_block_writer，后面就是一直调用append_row()往里面塞数据。因为是单线程，所以只创建了一个writer，多线程可以创建多个
+  int init_macro_block_writer(const share::schema::ObTableSchema *table_schema);
   int create_sstable();
 private:
   common::ObTabletID tablet_id_;
@@ -236,6 +240,7 @@ private:
   blocksstable::ObSSTableIndexBuilder sstable_index_builder_;
   blocksstable::ObDataStoreDesc data_store_desc_;
   blocksstable::ObMacroBlockWriter macro_block_writer_;
+  // blocksstable::ObMacroBlockWriter *macro_block_writers_[16];
   blocksstable::ObDatumRow datum_row_;
   bool is_closed_;
   bool is_inited_;
@@ -243,13 +248,13 @@ private:
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2; // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   // static const int64_t FILE_BUFFER_SIZE = (1LL << 20); // 1M
 public:
-  // friend void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
-  // friend void thread_read_buffer(void *arg, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i, ObLoadExternalSort *external_sort_i);
   friend void thread_read_buffer(void *arg);
+  friend void thread_sstable_writer(void *arg);
+  friend void thread_sstable_close(void *arg);
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
   int execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt) override;
@@ -267,9 +272,10 @@ private:
   // ObLoadDataBuffer buffer_0, buffer_1, buffer_2, buffer_3, buffer_4, buffer_5, buffer_6, buffer_7;
 };
 
-// void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
-// void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
 void thread_read_buffer(void *arg);
+void thread_external_close(void *arg);
+void thread_sstable_writer(void *arg);
+void thread_sstable_close(void *arg);
 
 class MyThreadPool;
 
@@ -283,7 +289,9 @@ public:
   ObLoadRowCaster *row_caster_;
   ObLoadExternalSort *external_sorts_;
   ObLoadExternalSort *external_sort_;
+  blocksstable::ObMacroBlockWriter **macro_block_writers_;
   Offset *offset_;
+  int index_;
 
   void setFunc(void (*tcb)(void *)) { task_call_back = tcb; }
 };
@@ -311,8 +319,10 @@ public:
   由此问题解决
   */
   void createPool();
-  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadExternalSort external_sorts[16], Offset *offset);
+  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadExternalSort external_sorts[], Offset *offset);
   void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort);
+  void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort, ObLoadDataDirectDemo *this_, blocksstable::ObMacroBlockWriter *macro_block_writers[], int index);
+  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, blocksstable::ObMacroBlockWriter *macro_block_writers[], int index);
   int init(ObLoadDataStmt &load_stmt);
   void run1() override;
   void mydestroy();
