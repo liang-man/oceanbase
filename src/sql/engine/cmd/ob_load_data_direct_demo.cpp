@@ -894,6 +894,7 @@ int ObLoadSSTableWriter::init_macro_block_writer(const ObTableSchema *table_sche
   } else {
     data_store_desc_.sstable_index_builder_ = &sstable_index_builder_;
   }
+  #if 0
   if (OB_SUCC(ret)) {
     // for (int i = 0; i < 16; ++i) {
     //   // int64_t parallel_idx = i * 4294967296;    // 2^32
@@ -904,15 +905,17 @@ int ObLoadSSTableWriter::init_macro_block_writer(const ObTableSchema *table_sche
     //   macro_block_writers_[i]->open(data_store_desc_, data_seq);
     // }
     ObMacroDataSeq data_seq;
+    data_seq.set_parallel_degree(i);
     if (OB_FAIL(macro_block_writer_.open(data_store_desc_, data_seq))) {
       LOG_WARN("fail to init macro block writer", KR(ret), K(data_store_desc_), K(data_seq));
     }
   }
+  #endif
   return ret;
 }
 
 // int ObLoadSSTableWriter::append_row(const ObLoadDatumRow &datum_row, blocksstable::ObMacroBlockWriter *macro_block_writers_[], int index)
-int ObLoadSSTableWriter::append_row(const ObLoadDatumRow &datum_row)
+int ObLoadSSTableWriter::append_row(const ObLoadDatumRow &datum_row, blocksstable::ObMacroBlockWriter *macro_block_writer)
 {
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
@@ -932,7 +935,7 @@ int ObLoadSSTableWriter::append_row(const ObLoadDatumRow &datum_row)
         datum_row_.storage_datums_[i + extra_rowkey_column_num_] = datum_row.datums_[i];
       }
     }
-    if (OB_FAIL(macro_block_writer_.append_row(datum_row_))) {
+    if (OB_FAIL(macro_block_writer->append_row(datum_row_))) {
       LOG_WARN("fail to append row", KR(ret));
     }
   }
@@ -1009,7 +1012,7 @@ int  ObLoadSSTableWriter::create_sstable()
 }
 
 // int ObLoadSSTableWriter::close(blocksstable::ObMacroBlockWriter *macro_block_writers_[], int index)
-int ObLoadSSTableWriter::close()
+int ObLoadSSTableWriter::close(blocksstable::ObMacroBlockWriter *macro_block_writer)
 {
   int ret = OB_SUCCESS;
   if (IS_NOT_INIT) {
@@ -1020,13 +1023,14 @@ int ObLoadSSTableWriter::close()
     LOG_WARN("unexpected closed sstable writer", KR(ret));
   } else {
     ObSSTable *sstable = nullptr;
-    if (OB_FAIL(macro_block_writer_.close())) {
+    if (OB_FAIL(macro_block_writer->close())) {
       LOG_WARN("fail to close macro block writer", KR(ret));
-    } else if (OB_FAIL(create_sstable())) {
-      LOG_WARN("fail to create sstable", KR(ret));
-    } else {
-      is_closed_ = true;
-    }
+    } 
+    // else if (OB_FAIL(create_sstable())) {    // 这块不能执行，得等所有的block_writer_写完再执行，只调用1次即可
+    //   LOG_WARN("fail to create sstable", KR(ret));
+    // } else {
+    //   // is_closed_ = true;    // 这块如果为true，会导致其他线程无法关闭
+    // }
   }
   return ret;
 }
@@ -1337,6 +1341,75 @@ void thread_read_buffer(void *arg)
             pthread_mutex_unlock(&mtx_append[7]);
           }  
           #endif
+
+          #if 0
+          int64_t l_orderkey = datum_row->datums_[0].get_int();
+          if (0 <= l_orderkey && l_orderkey <= 3750) {
+            pthread_mutex_lock(&mtx_append[0]);
+            external_sorts[0].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[0]);
+          } else if (3750 <= l_orderkey && l_orderkey <= 7500) {
+            pthread_mutex_lock(&mtx_append[1]);
+            external_sorts[1].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[1]);
+          } else if (7500 <= l_orderkey && l_orderkey <= 11250) {
+            pthread_mutex_lock(&mtx_append[2]);
+            external_sorts[2].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[2]);
+          } else if (11250 <= l_orderkey && l_orderkey <= 15000) {
+            pthread_mutex_lock(&mtx_append[3]);
+            external_sorts[3].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[3]);
+          } else if (15000 <= l_orderkey && l_orderkey <= 18750) {
+            pthread_mutex_lock(&mtx_append[4]);
+            external_sorts[4].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[4]);
+          } else if (18750 <= l_orderkey && l_orderkey <= 22500) {
+            pthread_mutex_lock(&mtx_append[5]);
+            external_sorts[5].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[5]);
+          } else if (22500 <= l_orderkey && l_orderkey <= 26250) {
+            pthread_mutex_lock(&mtx_append[6]);
+            external_sorts[6].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[6]);
+          } else if (26250 <= l_orderkey && l_orderkey <= 30000) {
+            pthread_mutex_lock(&mtx_append[7]);
+            external_sorts[7].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[7]);
+          } else if (30000 <= l_orderkey && l_orderkey <= 33750) {
+            pthread_mutex_lock(&mtx_append[8]);
+            external_sorts[8].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[8]);
+          } else if (33750 <= l_orderkey && l_orderkey <= 37500) {
+            pthread_mutex_lock(&mtx_append[9]);
+            external_sorts[9].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[9]);
+          } else if (37500 <= l_orderkey && l_orderkey <= 41250) {
+            pthread_mutex_lock(&mtx_append[10]);
+            external_sorts[10].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[10]);
+          } else if (41250 <= l_orderkey && l_orderkey <= 45000) {
+            pthread_mutex_lock(&mtx_append[11]);
+            external_sorts[11].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[11]);
+          } else if (45000 <= l_orderkey && l_orderkey <= 48750) {
+            pthread_mutex_lock(&mtx_append[12]);
+            external_sorts[12].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[12]);
+          } else if (48750 <= l_orderkey && l_orderkey <= 52500) {
+            pthread_mutex_lock(&mtx_append[13]);
+            external_sorts[13].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[13]);
+          } else if (52500 <= l_orderkey && l_orderkey <= 56250) {
+            pthread_mutex_lock(&mtx_append[14]);
+            external_sorts[14].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[14]);
+          } else if (56250 <= l_orderkey && l_orderkey <= 60000) {
+            pthread_mutex_lock(&mtx_append[15]);
+            external_sorts[15].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[15]);
+          } 
+          #endif
         } 
         // else if (OB_FAIL(external_sort->append_row(*datum_row))) {  // append_row()若用公用的this_->external_sort_，有问题，暂未解决
         //   LOG_WARN("fail to append row", KR(ret));
@@ -1360,10 +1433,16 @@ void thread_sstable_writer(void *arg)
   const ObLoadDatumRow *datum_row = nullptr;
   Task *task = (Task *)arg;
   ObLoadExternalSort *external_sort = task->external_sort_;
-  ObLoadDataDirectDemo *this_ = task->_this_;
-  blocksstable::ObMacroBlockWriter **macro_block_writers = task->macro_block_writers_;
+  ObLoadSSTableWriter *sstable_writer = task->sstable_writer_;
   int index = task->index_;
-  while (OB_SUCC(ret)) {      // 有多少行记录，循环多少次
+  // index = 15 - index;
+  // 创建并初始化block_writer_
+  blocksstable::ObMacroBlockWriter macro_block_writer;
+  ObMacroDataSeq data_seq;
+  data_seq.set_parallel_degree(index);
+  macro_block_writer.open(sstable_writer->data_store_desc_, data_seq);
+  // 开始写入
+  while (OB_SUCC(ret)) {      
     if (OB_FAIL(external_sort->get_next_row(datum_row))) {    
       if (OB_UNLIKELY(OB_ITER_END != ret)) {
         LOG_WARN("fail to get next row", KR(ret));
@@ -1371,19 +1450,36 @@ void thread_sstable_writer(void *arg)
         ret = OB_SUCCESS;
         break;
       }
-    } else if (OB_FAIL(this_->sstable_writer_.append_row(*datum_row))) {  
-      LOG_WARN("fail to append row", KR(ret));
+    } else {
+      pthread_mutex_lock(&mtx_block_writer);
+      sstable_writer->append_row(*datum_row, &macro_block_writer);
+      pthread_mutex_unlock(&mtx_block_writer);
+    }
+    // else if (OB_FAIL(sstable_writer->append_row(*datum_row, &macro_block_writer))) {  
+    //   LOG_WARN("fail to append row", KR(ret));
+    //   LOG_INFO("liangman", KR(index));
+    // }
+  }
+  // 关闭
+  if (OB_SUCC(ret)) {
+    if (OB_FAIL(sstable_writer->close(&macro_block_writer))) {
+      LOG_WARN("fail to close sstable writer", KR(ret));
     }
   }
-}
-
-void thread_sstable_close(void *arg)
-{
-  Task *task = (Task *)arg;
-  ObLoadDataDirectDemo *this_ = task->_this_;
-  blocksstable::ObMacroBlockWriter **macro_block_writers = task->macro_block_writers_;
-  int index = task->index_;
-  this_->sstable_writer_.close();
+  // sstable_writer->close(&macro_block_writer);    // error
+  // 不能直接调用close()，得要判断一下external_sort_里有没有数据，没有数据就不执行close，不落盘
+  // 如何发现：1、writer.close报错，怀疑是前面的external_sort->get_next_row读取行出错，因此决定看日志，果然发现有8个线程读取行出错，但是，也只有8个线程，且每个线程
+  // 只出错了1次，那么就说明这8个external_sort_的最后一行读取出错。
+  // 2、联想到，虽然有16个线程，但数据范围只会落在前8个external_sort_里，所以就怀疑这报错的8个线程里，是没有数据的
+  // 3、进一步联想到程序报错代码处，相关变量为空值，又通过上面分析，瞬间得出：是对没有数据的external_sort_进行了writer.close操作
+  // 4、再看原本的writer.close操作，果然发现是要加个if条件判断一下再执行close的，因此也验证了我的想法
+  // 总结：1、底层思想是要与原来正常的版本作对比，以此排除正确的地方，找出可能出错的点。而且找的时候，要确认一步操作没问题了，再排查下一步，即控制每次变量只有1个，我愿称之为“控制变量法”
+  //       2、日志很重要，能帮我定位问题出在哪里
+  //       3、htop看cpu调用情况，辅助分析多线程程序
+  //       4、看调用堆栈，断点打到报错日志处，看报错时相关变量是什么情况
+  //       5、不能盯着当前错误看，要分析上文
+  //       6、有时候程序是在循环中途出错的，通过打条件断点来定位
+  //       7、自己手动模拟小范围数据，带入到程序中运行看看效果，有助于理解代码细节
 }
 
 std::vector<std::pair<int64_t, int64_t>> get_read_pos(ObLoadDataBuffer *buffer, int threads, int64_t length, std::istringstream &is)
@@ -1653,6 +1749,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 
   for (int i = 0; i < threads; ++i)
     pthread_mutex_init(&mtx_append[i], nullptr);
+  pthread_mutex_init(&mtx_block_writer, nullptr);
 
   // 获取csv文件大小，单位字节
   int file_fd = file_reader_.get_file_fd();
@@ -1703,11 +1800,6 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
     row_casters[i].init(table_schema, field_or_var_list);
     external_sorts[i].init(table_schema, MEM_BUFFER_SIZE, FILE_BUFFER_SIZE);
   }
-  // 初始化sstable_writer_
-  // blocksstable::ObMacroBlockWriter *macro_block_writers_[threads];
-  // for (int i = 0; i < threads; ++i)
-  //   macro_block_writers_[i] = new blocksstable::ObMacroBlockWriter;
-  // sstable_writer_.init(table_schema, macro_block_writers_);
 
   // 创建线程池
   MyThreadPool thread_pool(threads);
@@ -1731,18 +1823,13 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   pthread_cond_wait(&thread_pool.cont_complete_, &thread_pool.mutex_complete_);
 
   // 写入sstable
-  // thread_pool.count_ = 0;
-  // for (int i = 0; i < threads; ++i) {
-  //   thread_pool.push_task(&thread_sstable_writer, &external_sorts[i], this, macro_block_writers_, i);
-  // }
-  // pthread_cond_wait(&thread_pool.cont_complete_, &thread_pool.mutex_complete_);
-
-  // close sstable
-  // thread_pool.count_ = 0;
-  // for (int i = 0; i < threads; ++i) {
-  //   thread_pool.push_task(&thread_sstable_close, this, macro_block_writers_, i);
-  // }
-  // pthread_cond_wait(&thread_pool.cont_complete_, &thread_pool.mutex_complete_);
+  thread_pool.count_ = 0;
+  for (int i = 0; i < threads; ++i) {
+    thread_pool.push_task(&thread_sstable_writer, &external_sorts[i], &sstable_writer_, i);
+  }
+  pthread_cond_wait(&thread_pool.cont_complete_, &thread_pool.mutex_complete_);
+  sstable_writer_.create_sstable();   // 虽然有16个block_writrer_，但只写1个sstable
+  sstable_writer_.set_close_flag(true);
 
   thread_pool.mydestroy();
   thread_pool.stop();
@@ -1757,26 +1844,26 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   // }
 
   // 将排序好的记录，存储为SSTable
-  for (int i = 0; i < threads; ++i) {
-    while (OB_SUCC(ret)) {      // 有多少行记录，循环多少次
-      if (OB_FAIL(external_sorts[i].get_next_row(datum_row))) {    
-        if (OB_UNLIKELY(OB_ITER_END != ret)) {
-          LOG_WARN("fail to get next row", KR(ret));
-        } else {
-          ret = OB_SUCCESS;
-          break;
-        }
-      } else if (OB_FAIL(sstable_writer_.append_row(*datum_row))) {  
-        LOG_WARN("fail to append row", KR(ret));
-      }
-    }
-  } 
+  // for (int i = 0; i < threads; ++i) {
+  //   while (OB_SUCC(ret)) {      // 有多少行记录，循环多少次
+  //     if (OB_FAIL(external_sorts[i].get_next_row(datum_row))) {    
+  //       if (OB_UNLIKELY(OB_ITER_END != ret)) {
+  //         LOG_WARN("fail to get next row", KR(ret));
+  //       } else {
+  //         ret = OB_SUCCESS;
+  //         break;
+  //       }
+  //     } else if (OB_FAIL(sstable_writer_.append_row(*datum_row))) {  
+  //       LOG_WARN("fail to append row", KR(ret));
+  //     }
+  //   }
+  // } 
   // close()就是把内存中的数据刷到宏块上，同时把刷出来的宏快丢给sstable_index_build去，之后就是构造sstable了
-  if (OB_SUCC(ret)) {
-    if (OB_FAIL(sstable_writer_.close())) {
-      LOG_WARN("fail to close sstable writer", KR(ret));
-    }
-  }
+  // if (OB_SUCC(ret)) {
+  //   if (OB_FAIL(sstable_writer_.close())) {
+  //     LOG_WARN("fail to close sstable writer", KR(ret));
+  //   }
+  // }
   
   return ret;
 }
@@ -1969,32 +2056,13 @@ void MyThreadPool::push_task(void(* tcb)(void *), ObLoadExternalSort *external_s
   pthread_mutex_unlock(&mutex_);
 }
 
-void MyThreadPool::push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort, ObLoadDataDirectDemo *this_, 
-                              blocksstable::ObMacroBlockWriter *macro_block_writers[], int index)
+void MyThreadPool::push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort, ObLoadSSTableWriter *sstable_writer, int i)
 {
   Task *task = new Task;
   task->setFunc(tcb);
   task->external_sort_ = external_sort;
-  task->_this_ = this_;
-  task->macro_block_writers_ = macro_block_writers;
-  task->index_ = index;
-
-  //-加锁
-  pthread_mutex_lock(&mutex_);
-  task_queue_.push_back(task);
-  //-通知执行队列中的一个进行任务
-  pthread_cond_signal(&cont_);
-  //-解锁
-  pthread_mutex_unlock(&mutex_);
-}
-
-void MyThreadPool::push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, blocksstable::ObMacroBlockWriter *macro_block_writers[], int index)
-{
-  Task *task = new Task;
-  task->setFunc(tcb);
-  task->_this_ = this_;
-  task->macro_block_writers_ = macro_block_writers;
-  task->index_ = index;
+  task->sstable_writer_ = sstable_writer;
+  task->index_ = i;
 
   //-加锁
   pthread_mutex_lock(&mutex_);

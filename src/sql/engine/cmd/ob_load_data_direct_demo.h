@@ -31,6 +31,7 @@ public:
 
 // liangman
 pthread_mutex_t mtx_append[16];    // 在load_data()内初始化
+pthread_mutex_t mtx_block_writer;
 
 // liangman
 struct Offset {
@@ -221,13 +222,16 @@ public:
   // int append_row(const ObLoadDatumRow &datum_row, blocksstable::ObMacroBlockWriter *macro_block_writers_[], int id);    // 往macro_block_writer里写数据时，调用这个函数就行
   // int close(blocksstable::ObMacroBlockWriter *macro_block_writers_[], int index);
   int init(const share::schema::ObTableSchema *table_schema);   // 初始化时用这个初始化就行
-  int append_row(const ObLoadDatumRow &datum_row);    // 往macro_block_writer里写数据时，调用这个函数就行
-  int close();
+  int append_row(const ObLoadDatumRow &datum_row, blocksstable::ObMacroBlockWriter *macro_block_writer);    // 往macro_block_writer里写数据时，调用这个函数就行
+  int close(blocksstable::ObMacroBlockWriter *macro_block_writer);
+  void set_close_flag(bool flag) { is_closed_ = flag; }
+  blocksstable::ObDataStoreDesc data_store_desc_;
+  int create_sstable();
 private:
   int init_sstable_index_builder(const share::schema::ObTableSchema *table_schema);   // 构造一个sstable_index_build，用于记录每个sstable的索引
   // int init_macro_block_writer(const share::schema::ObTableSchema *table_schema, blocksstable::ObMacroBlockWriter *macro_block_writers_[]);   // 构造一个macro_block_writer，后面就是一直调用append_row()往里面塞数据。因为是单线程，所以只创建了一个writer，多线程可以创建多个
   int init_macro_block_writer(const share::schema::ObTableSchema *table_schema);
-  int create_sstable();
+  // int create_sstable();    // 把它变为public
 private:
   common::ObTabletID tablet_id_;
   storage::ObTabletHandle tablet_handle_;
@@ -238,9 +242,9 @@ private:
   int64_t column_count_;
   storage::ObITable::TableKey table_key_;
   blocksstable::ObSSTableIndexBuilder sstable_index_builder_;
-  blocksstable::ObDataStoreDesc data_store_desc_;
-  blocksstable::ObMacroBlockWriter macro_block_writer_;
-  // blocksstable::ObMacroBlockWriter *macro_block_writers_[16];
+  // blocksstable::ObDataStoreDesc data_store_desc_;    // 把它变为public
+  // blocksstable::ObMacroBlockWriter macro_block_writer_;
+  // blocksstable::ObMacroBlockWriter macro_block_writers_[16];
   blocksstable::ObDatumRow datum_row_;
   bool is_closed_;
   bool is_inited_;
@@ -289,7 +293,7 @@ public:
   ObLoadRowCaster *row_caster_;
   ObLoadExternalSort *external_sorts_;
   ObLoadExternalSort *external_sort_;
-  blocksstable::ObMacroBlockWriter **macro_block_writers_;
+  ObLoadSSTableWriter *sstable_writer_;
   Offset *offset_;
   int index_;
 
@@ -321,8 +325,7 @@ public:
   void createPool();
   void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadExternalSort external_sorts[], Offset *offset);
   void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort);
-  void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort, ObLoadDataDirectDemo *this_, blocksstable::ObMacroBlockWriter *macro_block_writers[], int index);
-  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, blocksstable::ObMacroBlockWriter *macro_block_writers[], int index);
+  void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort, ObLoadSSTableWriter *sstable_writer, int i);
   int init(ObLoadDataStmt &load_stmt);
   void run1() override;
   void mydestroy();
