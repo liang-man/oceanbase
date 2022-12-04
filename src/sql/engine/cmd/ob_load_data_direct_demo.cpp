@@ -615,6 +615,7 @@ int ObLoadRowCaster::init_column_schemas_and_idxs(
   return ret;
 }
 
+// 这个函数只做了类型转换,并将主键放在第1列
 int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRow *&datum_row)
 {
   int ret = OB_SUCCESS;
@@ -624,15 +625,16 @@ int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRo
   } else {
     const int64_t extra_col_cnt = ObMultiVersionRowkeyHelpper::get_extra_rowkey_col_cnt();
     cast_allocator_.reuse();
-    for (int64_t i = 0; OB_SUCC(ret) && i < column_idxs_.count(); ++i) {
+    // 依次把每一个字段的值由string转为原本类型  i=0,idx=0;i=1,idx=3;i=2,idx=1;i=3,idx=2;i=4,idx=4;i=5,idx=5
+    for (int64_t i = 0; OB_SUCC(ret) && i < column_idxs_.count(); ++i) {     // column_idxs_.count() == 16
       int64_t column_idx = column_idxs_.at(i);
-      if (OB_UNLIKELY(column_idx < 0 || column_idx >= new_row.count_)) {
+      if (OB_UNLIKELY(column_idx < 0 || column_idx >= new_row.count_)) {    // new_row.count_ == 16
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("unexpected column idx", KR(ret), K(column_idx), K(new_row.count_));
       } else {
         const ObColumnSchemaV2 *column_schema = column_schemas_.at(i);
-        const ObObj &src_obj = new_row.cells_[column_idx];
-        ObStorageDatum &dest_datum = datum_row_.datums_[i];
+        const ObObj &src_obj = new_row.cells_[column_idx];    // 一行中每一列值，string类型
+        ObStorageDatum &dest_datum = datum_row_.datums_[i];   // 一行中每一列的真实值，对应各自的类型,转换后的
         if (OB_FAIL(cast_obj_to_datum(column_schema, src_obj, dest_datum))) {
           LOG_WARN("fail to cast obj to datum", KR(ret), K(src_obj));
         }
@@ -645,13 +647,14 @@ int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRo
   return ret;
 }
 
+// 做字符集转换、类型转换
 int ObLoadRowCaster::cast_obj_to_datum(const ObColumnSchemaV2 *column_schema, const ObObj &obj,
                                        ObStorageDatum &datum)
 {
   int ret = OB_SUCCESS;
   ObDataTypeCastParams cast_params(&tz_info_);
   ObCastCtx cast_ctx(&cast_allocator_, &cast_params, CM_NONE, collation_type_);
-  const ObObjType expect_type = column_schema->get_meta_type().get_type();
+  const ObObjType expect_type = column_schema->get_meta_type().get_type();    // 日期值的expect_type为ObDateType
   ObObj casted_obj;
   if (obj.is_null()) {
     casted_obj.set_null();
@@ -669,7 +672,7 @@ int ObLoadRowCaster::cast_obj_to_datum(const ObColumnSchemaV2 *column_schema, co
     }
   }
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(datum.from_obj_enhance(casted_obj))) {
+    if (OB_FAIL(datum.from_obj_enhance(casted_obj))) {    // 把转换后的结果赋给datum，作为结果返回
       LOG_WARN("fail to from obj enhance", KR(ret), K(casted_obj));
     }
   }
@@ -1453,6 +1456,12 @@ void thread_sstable_writer(void *arg)
       }
     } 
     else {
+      // 这里写入macro_block_writer时，得把数据转换一下，涉及到ob底层存储的东西
+      // 我原来直接调用的sstable的append_row()，那其中就多了下面这个for循环中的处理
+      // 我之前意识到这个问题，只是简单的把for循环加了进来，但是没有做datumRow的初始化，就导致了报错，然后我也就不了了之了
+      // 回顾当时的状态是，还是我怕麻烦，心理不愿意看datumRow是如何初始化的，当时也没能彻底明白for循环内部是干嘛的
+      // 怎么解决的，就是睡一觉起来，思路清晰，有耐心，又看了下这块的内容，看懂了，也就成功了。
+      // 还有就是苏止在群里说的，"在子线程创建、写数据、关闭、销毁。".让我坚定了这块一定可以成功，出错一定是我哪里有问题，方向肯定没错
       for (int64_t i = 0; i < column_count; ++i) {
         if (i < rowkey_column_num) {    // rowkey_column_num_、extra_rowkey_column_num_值都为2
           datumRow.storage_datums_[i] = datum_row->datums_[i];

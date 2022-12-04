@@ -4587,7 +4587,7 @@ static int string_date(const ObObjType expect_type, ObObjCastParams &params,
     ret = OB_INVALID_DATE_VALUE;
     LOG_USER_ERROR(OB_INVALID_DATE_VALUE, in.get_string().length(), in.get_string().ptr(), "");
   } else {
-    SET_RES_DATE(out);
+    SET_RES_DATE(out);    // 这一步把日期转为int32_t值赋值到v_中
   }
   SET_RES_ACCURACY(DEFAULT_PRECISION_FOR_TEMPORAL, DEFAULT_SCALE_FOR_DATE, DEFAULT_LENGTH_FOR_TEMPORAL);
   return ret;
@@ -10567,13 +10567,13 @@ int ObObjCaster::to_type(const ObObjType expect_type,
         LOG_WARN("failed to cast obj", K(ret), K(in_obj), K(in_tc), K(out_tc), K(expect_type), K(cast_ctx.cast_mode_));
       }
     //}
-  } else {
+  } else {    // liangman 这块是什么写法？根据不同的类型进入不同函数，后面可以学习一下
     if (OB_FAIL(OB_OBJ_CAST[in_tc][out_tc](expect_type, cast_ctx, in_obj, out_obj, cast_ctx.cast_mode_))) {
       LOG_WARN("failed to cast obj", K(ret), K(in_obj), K(in_tc), K(out_tc), K(expect_type), K(cast_ctx.cast_mode_));
     }
   }
   if (OB_SUCC(ret)) {
-    if (ObStringTC == out_tc || ObTextTC == out_tc || ObLobTC == out_tc) {
+    if (ObStringTC == out_tc || ObTextTC == out_tc || ObLobTC == out_tc) {   // 转换成功就不进入了
       if (ObStringTC == in_tc || ObTextTC == in_tc || ObLobTC == out_tc) {
         out_obj.set_collation_level(in_obj.get_collation_level());
       } else {

@@ -788,7 +788,7 @@ int ObTimeConverter::str_to_date(const ObString &str, int32_t &value,
   if (OB_FAIL(str_to_ob_time_with_date(str, ob_time, NULL, false, date_sql_mode))) {
     LOG_WARN("failed to convert string to date", K(ret));
   } else {
-    value = ob_time.parts_[DT_DATE];
+    value = ob_time.parts_[DT_DATE];    // 加入日期为1995-01-18，则value值为9148
   }
   return ret;
 }
