@@ -896,16 +896,7 @@ int ObLoadSSTableWriter::init_macro_block_writer(const ObTableSchema *table_sche
   }
   #if 0
   if (OB_SUCC(ret)) {
-    // for (int i = 0; i < 16; ++i) {
-    //   // int64_t parallel_idx = i * 4294967296;    // 2^32
-    //   ObMacroDataSeq data_seq;
-    //   data_seq.set_parallel_degree(i);
-    //   // blocksstable::ObMacroBlockWriter *tmp = new blocksstable::ObMacroBlockWriter;
-    //   // tmp->open(data_store_desc_, data_seq);
-    //   macro_block_writers_[i]->open(data_store_desc_, data_seq);
-    // }
     ObMacroDataSeq data_seq;
-    data_seq.set_parallel_degree(i);
     if (OB_FAIL(macro_block_writer_.open(data_store_desc_, data_seq))) {
       LOG_WARN("fail to init macro block writer", KR(ret), K(data_store_desc_), K(data_seq));
     }
@@ -929,7 +920,7 @@ int ObLoadSSTableWriter::append_row(const ObLoadDatumRow &datum_row, blocksstabl
     LOG_WARN("invalid args", KR(ret), K(datum_row), K(column_count_));
   } else {
     for (int64_t i = 0; i < column_count_; ++i) {
-      if (i < rowkey_column_num_) {
+      if (i < rowkey_column_num_) {    // rowkey_column_num_、extra_rowkey_column_num_值都为2
         datum_row_.storage_datums_[i] = datum_row.datums_[i];
       } else {
         datum_row_.storage_datums_[i + extra_rowkey_column_num_] = datum_row.datums_[i];
@@ -1435,12 +1426,22 @@ void thread_sstable_writer(void *arg)
   ObLoadExternalSort *external_sort = task->external_sort_;
   ObLoadSSTableWriter *sstable_writer = task->sstable_writer_;
   int index = task->index_;
-  // index = 15 - index;
   // 创建并初始化block_writer_
   blocksstable::ObMacroBlockWriter macro_block_writer;
   ObMacroDataSeq data_seq;
   data_seq.set_parallel_degree(index);
   macro_block_writer.open(sstable_writer->data_store_desc_, data_seq);
+  // 创建并初始化datumRow
+  blocksstable::ObDatumRow datumRow;
+  int64_t column_count = sstable_writer->column_count();
+  int64_t extra_rowkey_column_num = sstable_writer->extra_rowkey_column_num();
+  int64_t rowkey_column_num = sstable_writer->rowkey_column_num();
+  datumRow.init(column_count + extra_rowkey_column_num);
+  datumRow.row_flag_.set_flag(ObDmlFlag::DF_INSERT);
+  datumRow.mvcc_row_flag_.set_last_multi_version_row(true);
+  // 往主键字段后面加两个多版本字段
+  datumRow.storage_datums_[rowkey_column_num].set_int(-1); // fill trans_version
+  datumRow.storage_datums_[rowkey_column_num + 1].set_int(0); // fill sql_no
   // 开始写入
   while (OB_SUCC(ret)) {      
     if (OB_FAIL(external_sort->get_next_row(datum_row))) {    
@@ -1450,19 +1451,21 @@ void thread_sstable_writer(void *arg)
         ret = OB_SUCCESS;
         break;
       }
-    } else {
-      pthread_mutex_lock(&mtx_block_writer);
-      sstable_writer->append_row(*datum_row, &macro_block_writer);
-      pthread_mutex_unlock(&mtx_block_writer);
+    } 
+    else {
+      for (int64_t i = 0; i < column_count; ++i) {
+        if (i < rowkey_column_num) {    // rowkey_column_num_、extra_rowkey_column_num_值都为2
+          datumRow.storage_datums_[i] = datum_row->datums_[i];
+        } else {
+          datumRow.storage_datums_[i + extra_rowkey_column_num] = datum_row->datums_[i];
+        }
+      }
+      macro_block_writer.append_row(datumRow);
     }
-    // else if (OB_FAIL(sstable_writer->append_row(*datum_row, &macro_block_writer))) {  
-    //   LOG_WARN("fail to append row", KR(ret));
-    //   LOG_INFO("liangman", KR(index));
-    // }
   }
   // 关闭
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(sstable_writer->close(&macro_block_writer))) {
+    if (OB_FAIL(macro_block_writer.close())) {
       LOG_WARN("fail to close sstable writer", KR(ret));
     }
   }
@@ -1747,9 +1750,8 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 
   const int threads = 16;    // 16个子线程用于并行解析buffer_里的数据(消费者), 一个主线程用于读取磁盘里的数据2M存储到buffer_里(生产者)
 
-  for (int i = 0; i < threads; ++i)
+  for (int i = 0; i < threads; ++i) 
     pthread_mutex_init(&mtx_append[i], nullptr);
-  pthread_mutex_init(&mtx_block_writer, nullptr);
 
   // 获取csv文件大小，单位字节
   int file_fd = file_reader_.get_file_fd();
@@ -1760,7 +1762,8 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   Offset file_sections[threads];
   int64_t index = file_size / threads;
   int64_t length = index;          // 每段区间固定长度
-  char *read_buf = (char *)malloc(sizeof(char) * 1);;    // 一次只读1个字节  注意：得动态分配内存，不能初始化为nullptr 思考：这两个有什么不同？
+  int64_t sections_rowCnts[threads] = {length};
+  char *read_buf = (char *)malloc(sizeof(char) * 1);    // 一次只读1个字节  注意：得动态分配内存，不能初始化为nullptr 思考：这两个有什么不同？
   file_sections[0].begin = 1;     // 笔记：这块不能是0，因为在thread_read_buffer函数那里会对begin减1，若为0，减1为-1，就导致第一大块没有读，直接跳过了
   for (int th = 0; th < threads; ++th) {
     lseek(file_fd, index, SEEK_SET);

@@ -31,7 +31,6 @@ public:
 
 // liangman
 pthread_mutex_t mtx_append[16];    // 在load_data()内初始化
-pthread_mutex_t mtx_block_writer;
 
 // liangman
 struct Offset {
@@ -227,6 +226,9 @@ public:
   void set_close_flag(bool flag) { is_closed_ = flag; }
   blocksstable::ObDataStoreDesc data_store_desc_;
   int create_sstable();
+  int64_t column_count() { return column_count_; }
+  int64_t rowkey_column_num() { return rowkey_column_num_; }
+  int64_t extra_rowkey_column_num() { return extra_rowkey_column_num_; }
 private:
   int init_sstable_index_builder(const share::schema::ObTableSchema *table_schema);   // 构造一个sstable_index_build，用于记录每个sstable的索引
   // int init_macro_block_writer(const share::schema::ObTableSchema *table_schema, blocksstable::ObMacroBlockWriter *macro_block_writers_[]);   // 构造一个macro_block_writer，后面就是一直调用append_row()往里面塞数据。因为是单线程，所以只创建了一个writer，多线程可以创建多个
