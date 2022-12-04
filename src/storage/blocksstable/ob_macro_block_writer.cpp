@@ -144,9 +144,9 @@ int ObMicroBlockBufferHelper::check_micro_block(
     } else {
       // extra copy when decomp wrongly
       MEMCPY(block_buf + pos, decomp_buf, uncompressed_size);
-      if (OB_FAIL(check_micro_block_checksum(block_buf, buf_size, micro_desc.block_checksum_))) {
-        STORAGE_LOG(WARN, "failed to check_micro_block_checksum", K(ret), K(micro_desc));
-      }
+      // if (OB_FAIL(check_micro_block_checksum(block_buf, buf_size, micro_desc.block_checksum_))) {
+      //   STORAGE_LOG(WARN, "failed to check_micro_block_checksum", K(ret), K(micro_desc));
+      // }
     }
   }
   return ret;

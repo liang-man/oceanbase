@@ -254,11 +254,12 @@ private:
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2; // 500M
-  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.5; // 1G
-  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.4;
-  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.3;
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.2;
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 4;        // 1.5G 2min36s
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 3;     // 1.5G 2min29s, 比500M时快了20s
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.5;   // 提测爆内存
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.4;   // 提测爆内存
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.3;   // 提测爆内存
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.2;   // 提测爆内存  //1.csv 2.2s 相比500M时，反而慢了1s，为什么？
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   // static const int64_t FILE_BUFFER_SIZE = (1LL << 20); // 1M
 public:
