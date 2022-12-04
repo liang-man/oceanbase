@@ -256,7 +256,8 @@ class ObLoadDataDirectDemo : public ObLoadDataBase
 {
   // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2; // 500M
   // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.5; // 1G
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.4;
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.4;
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.3;
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   // static const int64_t FILE_BUFFER_SIZE = (1LL << 20); // 1M
 public:
