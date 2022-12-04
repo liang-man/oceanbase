@@ -976,11 +976,13 @@ int ObFragmentMerge<T, Compare>::get_next_item(const T *&item)
     if (OB_FAIL(direct_get_next_item(item))) {
       if (common::OB_ITER_END != ret) {
         STORAGE_LOG(WARN, "fail to directly get next item from reader", K(ret));
+        LOG_WARN("liangman: fail to directly get next item from reader", KR(ret));
       }
     }
   } else if (OB_FAIL(heap_get_next_item(item))) {
     if (common::OB_ITER_END != ret) {
       STORAGE_LOG(WARN, "fail to get next item from heap", K(ret));
+      LOG_WARN("liangman: fail to get next item from heap", KR(ret));
     }
   }
   return ret;
@@ -1290,11 +1292,13 @@ int ObExternalSortRound<T, Compare>::get_next_item(const T *&item)
     STORAGE_LOG(WARN, "ObExternalSortRound has not been inited", K(ret));
   } else if (!merger_.is_opened() && OB_FAIL(merger_.open())) {
     STORAGE_LOG(WARN, "fail to open merger", K(ret));
+    LOG_WARN("liangman: fail to open merger", KR(ret));
   }
   if (OB_SUCC(ret)) {
     if (OB_FAIL(merger_.get_next_item(item))) {
       if (common::OB_ITER_END != ret) {
         STORAGE_LOG(WARN, "fail to get next item", K(ret));
+        LOG_WARN("liangman: fail to get next item", KR(ret));
       }
     }
   }
@@ -1610,6 +1614,7 @@ int ObMemorySortRound<T, Compare>::get_next_item(const T *&item)
   } else if (NULL == iter_) {
     if (OB_FAIL(build_iterator())) {
       STORAGE_LOG(WARN, "fail to build iterator", K(ret));
+      LOG_WARN("liangman: fail to build iterator", KR(ret));
     }
   }
 
@@ -1619,6 +1624,7 @@ int ObMemorySortRound<T, Compare>::get_next_item(const T *&item)
       STORAGE_LOG(WARN, "error unexpected, iter must not be null", K(ret), KP(iter_));
     } else if (OB_FAIL(iter_->get_next_item(item))) {
       STORAGE_LOG(WARN, "fail to get next item", K(ret));
+      LOG_WARN("liangman: fail to get next item", KR(ret));
     }
   }
   return ret;
@@ -1826,11 +1832,13 @@ int ObExternalSort<T, Compare>::get_next_item(const T *&item)
     if (OB_FAIL(memory_sort_round_.get_next_item(item))) {
       if (common::OB_ITER_END != ret) {
         STORAGE_LOG(WARN, "fail to get next item", K(ret));
+        LOG_WARN("liangman: fail to get next item", KR(ret));
       }
     }
   } else if (OB_FAIL(curr_round_->get_next_item(item))) {
     if (common::OB_ITER_END != ret) {
       STORAGE_LOG(WARN, "fail to get next item", K(ret));
+      LOG_WARN("liangman: fail to get next item", KR(ret));
     }
   }
   return ret;

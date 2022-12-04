@@ -76,6 +76,7 @@ public:
                           int64_t &read_size) = 0;
   virtual int pread_by_fd(const int fd, const int64_t count, const int64_t offset,
                           IFileBuffer &file_buf, int64_t &read_size) = 0;
+  int get_file_fd() { return fd_; }
 protected:
   int fd_;
 };
@@ -304,6 +305,7 @@ public:
   void close();
   bool is_opened() const;
   void revise(int64_t pos);
+  int get_file_fd() { return file_->get_file_fd(); }
 public:
   int pread(void *buf, const int64_t count, const int64_t offset, int64_t &read_size);
   int pread(const int64_t count, const int64_t offset, IFileBuffer &file_buf, int64_t &read_size);

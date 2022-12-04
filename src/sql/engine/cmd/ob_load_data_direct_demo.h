@@ -29,6 +29,15 @@ public:
   }
 };
 
+// liangman
+pthread_mutex_t mtx_append[16];    // 在load_data()内初始化
+
+// liangman
+struct Offset {
+  int64_t begin;
+  int64_t end;
+};
+
 // 从文件里读到数据，存储在buffer里面
 class ObLoadDataBuffer
 {
@@ -56,13 +65,20 @@ public:
   OB_INLINE int threadID() const { return thread_ID_; }
   OB_INLINE int64_t begin_pos() const { return begin_pos_; }
   OB_INLINE int64_t end_pos() const { return end_pos_; }
+  OB_INLINE bool is_used() const { return is_used_; }
+  OB_INLINE void set_used(bool flag) { is_used_ = flag; }
+  // OB_INLINE int get_surplus() const { return surplus_; }
+  // OB_INLINE void set_surplus(int val) { surplus_ = val; }
 private:
   common::ObArenaAllocator allocator_;
   char *data_;
   int64_t begin_pos_;
   int64_t end_pos_;
   int64_t capacity_;
-  int thread_ID_ = -1;              // liangman
+  int thread_ID_ = -1;        // liangman
+  bool is_used_ = false;      // liangman   默认为false，表示没有被使用  注：被使用是指buffer里存储了数据，而不是在任务队列被线程调用
+  // 这个变量得作为全局变量，让所有buffer都能访问到
+  // int surplus_ = 0;           // liangmna   记录固定读取2M的buffer中，多出了的部分字节，构不成一个完整的行
 };
 
 // 读本地文件
@@ -72,7 +88,8 @@ public:
   ObLoadSequentialFileReader();
   ~ObLoadSequentialFileReader();
   int open(const ObString &filepath);
-  int read_next_buffer(ObLoadDataBuffer &buffer);
+  int read_next_buffer(ObLoadDataBuffer &buffer, Offset *offset, int64_t &section_offset);
+  int get_file_fd(){ return file_reader_.get_file_fd();}
 private:
   common::ObFileReader file_reader_;
   int64_t offset_;
@@ -200,13 +217,23 @@ class ObLoadSSTableWriter
 public:
   ObLoadSSTableWriter();
   ~ObLoadSSTableWriter();
+  // int init(const share::schema::ObTableSchema *table_schema, blocksstable::ObMacroBlockWriter *macro_block_writers_[]);   // 初始化时用这个初始化就行
+  // int append_row(const ObLoadDatumRow &datum_row, blocksstable::ObMacroBlockWriter *macro_block_writers_[], int id);    // 往macro_block_writer里写数据时，调用这个函数就行
+  // int close(blocksstable::ObMacroBlockWriter *macro_block_writers_[], int index);
   int init(const share::schema::ObTableSchema *table_schema);   // 初始化时用这个初始化就行
-  int append_row(const ObLoadDatumRow &datum_row);    // 往macro_block_writer里写数据时，调用这个函数就行
-  int close();
+  int append_row(const ObLoadDatumRow &datum_row, blocksstable::ObMacroBlockWriter *macro_block_writer);    // 往macro_block_writer里写数据时，调用这个函数就行
+  int close(blocksstable::ObMacroBlockWriter *macro_block_writer);
+  void set_close_flag(bool flag) { is_closed_ = flag; }
+  blocksstable::ObDataStoreDesc data_store_desc_;
+  int create_sstable();
+  int64_t column_count() { return column_count_; }
+  int64_t rowkey_column_num() { return rowkey_column_num_; }
+  int64_t extra_rowkey_column_num() { return extra_rowkey_column_num_; }
 private:
   int init_sstable_index_builder(const share::schema::ObTableSchema *table_schema);   // 构造一个sstable_index_build，用于记录每个sstable的索引
-  int init_macro_block_writer(const share::schema::ObTableSchema *table_schema);   // 构造一个macro_block_writer，后面就是一直调用append_row()往里面塞数据。因为是单线程，所以只创建了一个writer，多线程可以创建多个
-  int create_sstable();
+  // int init_macro_block_writer(const share::schema::ObTableSchema *table_schema, blocksstable::ObMacroBlockWriter *macro_block_writers_[]);   // 构造一个macro_block_writer，后面就是一直调用append_row()往里面塞数据。因为是单线程，所以只创建了一个writer，多线程可以创建多个
+  int init_macro_block_writer(const share::schema::ObTableSchema *table_schema);
+  // int create_sstable();    // 把它变为public
 private:
   common::ObTabletID tablet_id_;
   storage::ObTabletHandle tablet_handle_;
@@ -217,8 +244,9 @@ private:
   int64_t column_count_;
   storage::ObITable::TableKey table_key_;
   blocksstable::ObSSTableIndexBuilder sstable_index_builder_;
-  blocksstable::ObDataStoreDesc data_store_desc_;
-  blocksstable::ObMacroBlockWriter macro_block_writer_;
+  // blocksstable::ObDataStoreDesc data_store_desc_;    // 把它变为public
+  // blocksstable::ObMacroBlockWriter macro_block_writer_;
+  // blocksstable::ObMacroBlockWriter macro_block_writers_[16];
   blocksstable::ObDatumRow datum_row_;
   bool is_closed_;
   bool is_inited_;
@@ -226,13 +254,13 @@ private:
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2; // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   // static const int64_t FILE_BUFFER_SIZE = (1LL << 20); // 1M
 public:
-  // friend void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
-  // friend void thread_read_buffer(void *arg, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i, ObLoadExternalSort *external_sort_i);
   friend void thread_read_buffer(void *arg);
+  friend void thread_sstable_writer(void *arg);
+  friend void thread_sstable_close(void *arg);
   ObLoadDataDirectDemo();
   virtual ~ObLoadDataDirectDemo();
   int execute(ObExecContext &ctx, ObLoadDataStmt &load_stmt) override;
@@ -250,9 +278,10 @@ private:
   // ObLoadDataBuffer buffer_0, buffer_1, buffer_2, buffer_3, buffer_4, buffer_5, buffer_6, buffer_7;
 };
 
-// void thread_read_buffer(int id, int64_t start_point, int64_t volume, std::istringstream &is, std::ofstream &out, ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
-// void thread_read_buffer(ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
 void thread_read_buffer(void *arg);
+void thread_external_close(void *arg);
+void thread_sstable_writer(void *arg);
+void thread_sstable_close(void *arg);
 
 class MyThreadPool;
 
@@ -261,11 +290,15 @@ public:
   // void (*task_call_back)(void *, ObLoadCSVPaser *, ObLoadRowCaster *, ObLoadExternalSort *);
   void (*task_call_back)(void *);
   ObLoadDataDirectDemo *_this_; 
-  ObLoadDataBuffer *buffer_i_; 
-  ObLoadCSVPaser *csv_parser_i_; 
-  ObLoadRowCaster *row_caster_i_;
-  // ObLoadDataBuffer *buffer;
-  // void setFunc(void (*tcb)(void *, ObLoadCSVPaser *, ObLoadRowCaster *, ObLoadExternalSort *)) { task_call_back = tcb; }
+  ObLoadDataBuffer *buffer_;
+  ObLoadCSVPaser *csv_parser_; 
+  ObLoadRowCaster *row_caster_;
+  ObLoadExternalSort *external_sorts_;
+  ObLoadExternalSort *external_sort_;
+  ObLoadSSTableWriter *sstable_writer_;
+  Offset *offset_;
+  int index_;
+
   void setFunc(void (*tcb)(void *)) { task_call_back = tcb; }
 };
 
@@ -280,8 +313,6 @@ public:
 
 class MyThreadPool : public ObThreadPool
 {
-  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30); // 1G
-  // static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
 public:
   MyThreadPool(int thread_count);
   // virtual ~MyThreadPool();   // 笔记：不能自己定义析构函数，会覆盖父类的析构函数，得执行父类的析构函数  
@@ -294,8 +325,9 @@ public:
   由此问题解决
   */
   void createPool();
-  void push_task(void(*tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer_i, ObLoadCSVPaser *csv_parser_i, ObLoadRowCaster *row_caster_i);
-  // void push_task(void(* tcb)(void *, ObLoadCSVPaser *, ObLoadRowCaster *, ObLoadExternalSort *), ObLoadDataBuffer *buffer_i);
+  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadExternalSort external_sorts[], Offset *offset);
+  void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort);
+  void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort, ObLoadSSTableWriter *sstable_writer, int i);
   int init(ObLoadDataStmt &load_stmt);
   void run1() override;
   void mydestroy();
@@ -304,12 +336,11 @@ public:
   std::deque<WorkThread *> work_thread_queue_;   // 执行线程队列 
   int thread_count_;
   int count_;
+  int task_num_;        // 任务队列中任务个数上限
+  bool master_sleep_;   // 标志主线程状态，true表示睡眠，false表示活跃，初始化为false
   bool usable_ = true;
-  pthread_cond_t cont_, cont_master_;
-  pthread_mutex_t mutex_, mutex_master_;
-  // ObLoadCSVPaser csv_parser_i_[7];
-  // ObLoadRowCaster row_caster_i_[7];
-  // ObLoadExternalSort external_sort_i_[7];
+  pthread_cond_t cont_, cont_master_, cont_complete_;
+  pthread_mutex_t mutex_, mutex_master_, mutex_complete_;
 };
 
 } // namespace sql
