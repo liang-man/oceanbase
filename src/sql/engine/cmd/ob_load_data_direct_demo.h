@@ -255,7 +255,7 @@ private:
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2; // 1G
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2.5; // 1G
   static const int64_t FILE_BUFFER_SIZE = (2LL << 20); // 2M
   // static const int64_t FILE_BUFFER_SIZE = (1LL << 20); // 1M
 public:
@@ -297,6 +297,7 @@ public:
   ObLoadExternalSort *external_sorts_;
   ObLoadExternalSort *external_sort_;
   ObLoadSSTableWriter *sstable_writer_;
+  int *data_ranges;
   Offset *offset_;
   int index_;
 
@@ -327,6 +328,7 @@ public:
   */
   void createPool();
   void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadExternalSort external_sorts[], Offset *offset);
+  void push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadExternalSort external_sorts[], int data_ranges[],Offset *offset);
   void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort);
   void push_task(void(* tcb)(void *), ObLoadExternalSort *external_sort, ObLoadSSTableWriter *sstable_writer, int i);
   int init(ObLoadDataStmt &load_stmt);

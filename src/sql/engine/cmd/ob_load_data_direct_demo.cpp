@@ -8,6 +8,7 @@
 #include "storage/tx_storage/ob_ls_service.h"
 
 #include <iostream>    
+#include <algorithm>
 #include <fstream>
 #include <string>
 #include <thread>
@@ -1172,7 +1173,7 @@ void thread_read_buffer(void *arg)
 #endif
 
 // v2  全流程都用多线程
-#if 1
+#if 0
 void thread_read_buffer(void *arg)
 {
   int ret = OB_SUCCESS;
@@ -1410,6 +1411,146 @@ void thread_read_buffer(void *arg)
   }
 }
 #endif
+
+
+// RioChen -v3 随机采样
+// v2  全流程都用多线程
+#if 1
+void thread_read_buffer(void *arg)
+{
+  int ret = OB_SUCCESS;
+  const ObNewRow *new_row = nullptr;
+  const ObLoadDatumRow *datum_row = nullptr;
+  Task *task = (Task *)arg;
+  ObLoadDataDirectDemo *this_ = task->_this_;
+  ObLoadDataBuffer *buffer = task->buffer_;
+  ObLoadCSVPaser *csv_parser = task->csv_parser_;
+  ObLoadRowCaster *row_caster = task->row_caster_;
+  ObLoadExternalSort *external_sorts = task->external_sorts_;
+  Offset *offset = task->offset_;
+  int *data_ranges = task->data_ranges;
+  // 笔记：这里read_next_buffer()里的pread()函数，是从当前偏移的下一个字符开始读，就像read()一样,所以要减1
+  int64_t section_offset = offset->begin - 1; // 当前线程负责的文件起始偏移
+
+  while (OB_SUCC(ret)) {  
+    if (OB_FAIL(buffer->squash())) {    
+      LOG_WARN("fail to squash buffer", KR(ret));
+    } else if (OB_FAIL(this_->file_reader_.read_next_buffer(*buffer, offset, section_offset))) {  
+      if (OB_UNLIKELY(OB_ITER_END != ret)) {
+        LOG_WARN("fail to read next buffer", KR(ret));
+      } else {
+        if (OB_UNLIKELY(!buffer->empty())) {
+          ret = OB_ERR_UNEXPECTED;
+          LOG_WARN("unexpected incomplate data", KR(ret));
+        }
+        ret = OB_SUCCESS;
+        break;               // 这里表示全部数据读完，要退出函数了  
+      }
+    } else if (OB_UNLIKELY(buffer->empty())) {
+      ret = OB_ERR_UNEXPECTED;
+      LOG_WARN("unexpected empty buffer", KR(ret));
+    } else {
+      while (OB_SUCC(ret)) {
+        // 笔记：csv_parser_不能公用，得一个buffer一个csv_parser, row_caster_同理.
+        if (OB_FAIL(csv_parser->get_next_row(*buffer, new_row))) {   
+          if (OB_UNLIKELY(OB_ITER_END != ret)) {
+            LOG_WARN("fail to get next row", KR(ret));
+          } else {
+            ret = OB_SUCCESS;
+            break;             // 这里表示一个buffer中的数据读完，要开始读取下一个buffer
+          }
+        } else if (OB_FAIL(row_caster->get_casted_row(*new_row, datum_row))) {   
+          LOG_WARN("fail to cast row", KR(ret));
+        } else {
+          // int64_t val;
+          // for (int i = 0; i < datum_row->count_; ++i) {
+          //   val = datum_row->datums_[i].get_int();
+          // }
+
+          // pthread_mutex_lock(&mtx_append);
+          // ret = this_->external_sort_.append_row(*datum_row);
+          // pthread_mutex_unlock(&mtx_append);
+
+          #if 1
+          int64_t l_orderkey = datum_row->datums_[0].get_int();
+          if (0 <= l_orderkey && l_orderkey <= data_ranges[0]) {
+            pthread_mutex_lock(&mtx_append[0]);
+            external_sorts[0].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[0]);
+          } else if (data_ranges[0] <= l_orderkey && l_orderkey <= data_ranges[1]) {
+            pthread_mutex_lock(&mtx_append[1]);
+            external_sorts[1].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[1]);
+          } else if (data_ranges[1] <= l_orderkey && l_orderkey <= data_ranges[2]) {
+            pthread_mutex_lock(&mtx_append[2]);
+            external_sorts[2].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[2]);
+          } else if (data_ranges[2] <= l_orderkey && l_orderkey <= data_ranges[3]) {
+            pthread_mutex_lock(&mtx_append[3]);
+            external_sorts[3].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[3]);
+          } else if (data_ranges[3] <= l_orderkey && l_orderkey <= data_ranges[4]) {
+            pthread_mutex_lock(&mtx_append[4]);
+            external_sorts[4].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[4]);
+          } else if (data_ranges[4] <= l_orderkey && l_orderkey <= data_ranges[5]) {
+            pthread_mutex_lock(&mtx_append[5]);
+            external_sorts[5].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[5]);
+          } else if (data_ranges[5] <= l_orderkey && l_orderkey <= data_ranges[6]) {
+            pthread_mutex_lock(&mtx_append[6]);
+            external_sorts[6].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[6]);
+          } else if (data_ranges[6] <= l_orderkey && l_orderkey <= data_ranges[7]) {
+            pthread_mutex_lock(&mtx_append[7]);
+            external_sorts[7].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[7]);
+          } else if (data_ranges[7] <= l_orderkey && l_orderkey <= data_ranges[8]) {
+            pthread_mutex_lock(&mtx_append[8]);
+            external_sorts[8].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[8]);
+          } else if (data_ranges[8] <= l_orderkey && l_orderkey <= data_ranges[9]) {
+            pthread_mutex_lock(&mtx_append[9]);
+            external_sorts[9].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[9]);
+          } else if (data_ranges[9] <= l_orderkey && l_orderkey <= data_ranges[10]) {
+            pthread_mutex_lock(&mtx_append[10]);
+            external_sorts[10].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[10]);
+          } else if (data_ranges[10] <= l_orderkey && l_orderkey <= data_ranges[11]) {
+            pthread_mutex_lock(&mtx_append[11]);
+            external_sorts[11].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[11]);
+          } else if (data_ranges[11] <= l_orderkey && l_orderkey <= data_ranges[12]) {
+            pthread_mutex_lock(&mtx_append[12]);
+            external_sorts[12].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[12]);
+          } else if (data_ranges[12] <= l_orderkey && l_orderkey <= data_ranges[13]) {
+            pthread_mutex_lock(&mtx_append[13]);
+            external_sorts[13].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[13]);
+          } else if (data_ranges[13] <= l_orderkey && l_orderkey <= data_ranges[14]) {
+            pthread_mutex_lock(&mtx_append[14]);
+            external_sorts[14].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[14]);
+          } else if (data_ranges[14] < l_orderkey ) {
+            pthread_mutex_lock(&mtx_append[15]);
+            external_sorts[15].append_row(*datum_row);
+            pthread_mutex_unlock(&mtx_append[15]);
+          } 
+          #endif
+
+        } 
+        // else if (OB_FAIL(external_sort->append_row(*datum_row))) {  // append_row()若用公用的this_->external_sort_，有问题，暂未解决
+        //   LOG_WARN("fail to append row", KR(ret));
+        // }
+      }
+    }
+  }
+}
+#endif
+
+
 
 void thread_external_close(void *arg)
 {
@@ -1741,6 +1882,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 
 #endif
 
+
 // v2 文件读取部分，多线程全流程处理
 int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 {
@@ -1750,6 +1892,9 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
 
   const int threads = 16;    // 16个子线程用于并行解析buffer_里的数据(消费者), 一个主线程用于读取磁盘里的数据2M存储到buffer_里(生产者)
 
+  // RioChen-随机采样，用于桶排序划分数据range
+  int data_ranges[threads - 1];
+  
   for (int i = 0; i < threads; ++i) 
     pthread_mutex_init(&mtx_append[i], nullptr);
 
@@ -1759,6 +1904,9 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
   fstat(file_fd, &statbuf);
   int64_t file_size = statbuf.st_size;
   // 给每个线程划分要读取的数据范围：起始点，终止点
+
+  std::string row_key_str;
+
   Offset file_sections[threads];
   int64_t index = file_size / threads;
   int64_t length = index;          // 每段区间固定长度
@@ -1775,12 +1923,28 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
         break;
       }
     }
+
+  if(th != threads - 1){
+    for(int i = 0;i < 500; ++i){
+      read(file_fd,read_buf,1);
+      if(*read_buf == '|'){
+        break;
+      }
+      else{
+        row_key_str.push_back(*read_buf);
+      }
+    }
+    data_ranges[th] = std::stoi(row_key_str);
+    row_key_str = "";
+  }
     if (th != threads - 1)
       file_sections[th + 1].begin = index + 1;
     index += length;    // 到达下一个区间的末尾位置
   }
   file_sections[threads - 1].end = file_size;
   lseek(file_fd, 0, SEEK_SET);
+
+  std::sort(data_ranges,data_ranges + threads - 1);
 
   // 预先创建线程个数个buffer、csv_parser、row_caster、external_sort
   // 不要把csv_parsers和row_casters初始化在线程函数内，好处是①不用加锁，可以加快速度；②不用每次都初始化一次，可以加快速度
@@ -1814,7 +1978,7 @@ int ObLoadDataDirectDemo::do_load(ObExecContext &ctx, ObLoadDataStmt &load_stmt)
  
   // 多个线程全流程处理
   for (int i = 0; i < threads; ++i) {
-    thread_pool.push_task(&thread_read_buffer, this, &buffers[i], &csv_parsers[i], &row_casters[i], external_sorts, &file_sections[i]);
+    thread_pool.push_task(&thread_read_buffer, this, &buffers[i], &csv_parsers[i], &row_casters[i], external_sorts, data_ranges, &file_sections[i]);
   }
   pthread_cond_wait(&thread_pool.cont_complete_, &thread_pool.mutex_complete_);  
 
@@ -2035,6 +2199,27 @@ void MyThreadPool::push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, O
   task->csv_parser_ = csv_parser;
   task->row_caster_ = row_caster;
   task->external_sorts_ = external_sorts;
+  task->offset_ = offset;
+
+  //-加锁
+  pthread_mutex_lock(&mutex_);
+  task_queue_.push_back(task);
+  //-通知执行队列中的一个进行任务
+  pthread_cond_signal(&cont_);
+  //-解锁
+  pthread_mutex_unlock(&mutex_);
+}
+
+void MyThreadPool::push_task(void(* tcb)(void *), ObLoadDataDirectDemo *this_, ObLoadDataBuffer *buffer, ObLoadCSVPaser *csv_parser,  ObLoadRowCaster *row_caster, ObLoadExternalSort external_sorts[], int data_ranges[],Offset *offset)
+{
+  Task *task = new Task;
+  task->setFunc(tcb);
+  task->_this_ = this_;
+  task->buffer_ = buffer;
+  task->csv_parser_ = csv_parser;
+  task->row_caster_ = row_caster;
+  task->external_sorts_ = external_sorts;
+  task->data_ranges = data_ranges;
   task->offset_ = offset;
 
   //-加锁
