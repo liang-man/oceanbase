@@ -7,6 +7,7 @@
 #include "storage/blocksstable/ob_index_block_builder.h"
 #include "storage/ob_parallel_external_sort.h"
 #include "storage/tx_storage/ob_ls_handle.h"
+#include "share/ob_thread_pool.h"
 
 namespace oceanbase
 {
@@ -321,7 +322,7 @@ public:
   由此我就想到，我先前已经调用过mydestroy()了，这里就不需要在析构函数内继续释放，所以注释了析构函数内的内容，使得析构函数为空。
   但结果发现还是不对，现象貌似是线程仍在阻塞休眠
   由此我瞬间就想到，我是继承了ObThreadPool，那应该ObThreadPool类也需要相关的线程释放
-  所以我就注释了我自己的析构函数，让去调用ObThreadPool的析构函数
+  所以我就注释了我自己的析构函数，让程序自己去调用ObThreadPool的析构函数
   由此问题解决
   */
   void createPool();

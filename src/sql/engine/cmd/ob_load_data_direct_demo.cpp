@@ -1969,6 +1969,7 @@ void MyThreadPool::run1()
 }
 #endif
 
+#if 1
 void MyThreadPool::run1()
 {
   ObTenantStatEstGuard stat_est_guard(MTL_ID());
@@ -2011,6 +2012,7 @@ void MyThreadPool::run1()
     pthread_mutex_unlock(&mutex_complete_);
   }
 }
+#endif
 
 void MyThreadPool::createPool() 
 {
