@@ -635,9 +635,13 @@ int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRo
         const ObColumnSchemaV2 *column_schema = column_schemas_.at(i);
         const ObObj &src_obj = new_row.cells_[column_idx];    // 一行中每一列值，string类型
         ObStorageDatum &dest_datum = datum_row_.datums_[i];   // 一行中每一列的真实值，对应各自的类型,转换后的
-        if (OB_FAIL(cast_obj_to_datum(column_schema, src_obj, dest_datum))) {
+        if (OB_FAIL(cast_obj_to_datum(column_schema, src_obj, dest_datum, i))) {
           LOG_WARN("fail to cast obj to datum", KR(ret), K(src_obj));
         }
+        // if (0 <= i && i <= 3) {   // 默认存储为8字节，现手动改为4字节
+        //   dest_datum.set_len_and_pack(4);
+        // }
+        // int a = 5;
       }
     }
     if (OB_SUCC(ret)) {
@@ -649,12 +653,12 @@ int ObLoadRowCaster::get_casted_row(const ObNewRow &new_row, const ObLoadDatumRo
 
 // 做字符集转换、类型转换
 int ObLoadRowCaster::cast_obj_to_datum(const ObColumnSchemaV2 *column_schema, const ObObj &obj,
-                                       ObStorageDatum &datum)
+                                       ObStorageDatum &datum, int i)
 {
   int ret = OB_SUCCESS;
   ObDataTypeCastParams cast_params(&tz_info_);
   ObCastCtx cast_ctx(&cast_allocator_, &cast_params, CM_NONE, collation_type_);
-  const ObObjType expect_type = column_schema->get_meta_type().get_type();    // 日期值的expect_type为ObDateType
+  const ObObjType expect_type = column_schema->get_meta_type().get_type();    // 日期值的expect_type为ObDateType  Interger为ObInt32Type
   ObObj casted_obj;
   if (obj.is_null()) {
     casted_obj.set_null();
@@ -672,7 +676,9 @@ int ObLoadRowCaster::cast_obj_to_datum(const ObColumnSchemaV2 *column_schema, co
     }
   }
   if (OB_SUCC(ret)) {
-    if (OB_FAIL(datum.from_obj_enhance(casted_obj))) {    // 把转换后的结果赋给datum，作为结果返回
+    if (0 <= i && i <= 3) {
+      datum.my_from_obj_enhance(casted_obj);
+    } else if (OB_FAIL(datum.from_obj_enhance(casted_obj))) {    // 把转换后的结果赋给datum，作为结果返回  ObObj转为ObStorageDatum类型
       LOG_WARN("fail to from obj enhance", KR(ret), K(casted_obj));
     }
   }

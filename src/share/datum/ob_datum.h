@@ -160,6 +160,9 @@ struct ObDatumDesc {
   bool is_outrow() const { return flag_ == FlagType::OUTROW; }
   void set_has_lob_header() { null_ = 0; flag_ = FlagType::HAS_LOB_HEADER; }
   bool has_lob_header() const { return flag_ == FlagType::HAS_LOB_HEADER; }
+
+  // liangman
+  void set_len_and_pack(int num) { len_ = pack_ = num; }
 } __attribute__ ((packed)) ;
 
 // Datum structure, multiple inheritance from ObDatumPtr and ObDatumDesc makes
@@ -197,6 +200,8 @@ public:
   // From ObObj, the caller is responsible for ensuring %ptr_ has enough memory
   inline int from_obj(const ObObj &obj);
   inline int64_t checksum(const int64_t current) const;
+
+  inline int my_from_obj(const ObObj &obj);   // liangman
 
   // Convert to ObObj
   inline int to_obj(ObObj &obj, const ObObjMeta &meta, const ObObjDatumMapType map_type) const;
@@ -606,7 +611,7 @@ template <>
 inline void ObDatum::obj2datum<OBJ_DATUM_8BYTE_DATA>(const ObObj &obj)
 {
   memcpy(no_cv(ptr_), &obj.v_.uint64_, sizeof(uint64_t));
-  pack_ = sizeof(uint64_t);
+  pack_ = sizeof(uint64_t); 
 }
 
 template <>
@@ -765,6 +770,30 @@ inline int64_t ObDatum::checksum(const int64_t current) const
     result = ob_crc64_sse42(result, ptr_, len_);
   }
   return result;
+}
+
+// liangman
+inline int ObDatum::my_from_obj(const ObObj &obj)
+{
+  int ret = common::OB_SUCCESS;
+  if (obj.is_null()) {
+    set_null();
+  } else {
+    switch (obj.get_type()) {
+      case ObNullType: {
+        obj2datum<OBJ_DATUM_NULL>(obj);
+        break;
+      }
+      case ObInt32Type: {
+        obj2datum<OBJ_DATUM_8BYTE_DATA>(obj);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return ret;
 }
 
 inline int ObDatum::from_obj(const ObObj &obj)

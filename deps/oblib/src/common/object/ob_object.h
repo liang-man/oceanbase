@@ -666,6 +666,7 @@ union ObObjValue
 {
   int64_t int64_;
   uint64_t uint64_;
+  // uint32_t uint32_;   // liangman
 
   float float_;
   double double_;

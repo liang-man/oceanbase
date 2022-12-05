@@ -303,6 +303,7 @@ struct ObStorageDatum : public common::ObDatum
   OB_INLINE bool is_local_buf() const { return ptr_ == buf_; }
   OB_INLINE int from_buf_enhance(const char *buf, const int64_t buf_len);
   OB_INLINE int from_obj_enhance(const common::ObObj &obj);
+  OB_INLINE int my_from_obj_enhance(const common::ObObj &obj);   // liangman
   OB_INLINE int to_obj_enhance(common::ObObj &obj, const common::ObObjMeta &meta) const;
   OB_INLINE int deep_copy(const ObStorageDatum &src, common::ObIAllocator &allocator);
   OB_INLINE int deep_copy(const ObStorageDatum &src, char * buf, const int64_t buf_len, int64_t &pos);
@@ -578,6 +579,17 @@ OB_INLINE int ObStorageDatum::from_obj_enhance(const common::ObObj &obj)
   return ret;
 }
 
+// liangman
+OB_INLINE int ObStorageDatum::my_from_obj_enhance(const common::ObObj &obj)
+{
+  int ret = common::OB_SUCCESS;
+
+  reuse();
+
+  my_from_obj(obj);
+
+  return ret;
+}
 
 OB_INLINE int ObStorageDatum::to_obj_enhance(common::ObObj &obj, const common::ObObjMeta &meta) const
 {

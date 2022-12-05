@@ -181,7 +181,7 @@ private:
     const common::ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list);
   // 字符集的转换和类型的转换
   int cast_obj_to_datum(const share::schema::ObColumnSchemaV2 *column_schema,
-                        const common::ObObj &obj, blocksstable::ObStorageDatum &datum);
+                        const common::ObObj &obj, blocksstable::ObStorageDatum &datum, int i);
 private:
   common::ObArray<const share::schema::ObColumnSchemaV2 *> column_schemas_;   // 每一列的结构信息，对应的是存储的列  
   common::ObArray<int64_t> column_idxs_; // Mapping of store columns to source data columns
@@ -254,10 +254,10 @@ private:
 
 class ObLoadDataDirectDemo : public ObLoadDataBase
 {
-  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2.3;      // 1.5G 2min29s
+  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2.3;      // 1.5G 2min29s
   // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2.6;
   // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 4;     // 1.5G 2min36s
-  // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2.5;   // 1.5G 2min26s    
+  static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 2.5;   // 1.5G 2min26s    
   // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 3;     // 1.5G 2min29s, 比500M时快了20s
   // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.5;   // 提测爆内存
   // static const int64_t MEM_BUFFER_SIZE = (1LL << 30) / 1.4;   // 提测爆内存
