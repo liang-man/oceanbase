@@ -68,6 +68,7 @@ enum ObObjTypeStoreClass
   ObIntervalSC, //oracle interval year to month interval day to second
   ObLobSC,  //lob
   ObJsonSC, // json
+  MyInt32SC,  // MyInt32  liangman
   ObMaxSC,
 };
 
@@ -107,6 +108,7 @@ OB_INLINE ObObjTypeStoreClass *get_store_class_map()
     ObStringSC, // ObRowIDTC
     ObLobSC,    //ObLobTC
     ObJsonSC,   //ObJsonTC
+    MyInt32SC,  // MyInt32TC  liangman
     ObMaxSC // ObMaxTC
   };
   STATIC_ASSERT(ARRAYSIZEOF(store_class_map) == common::ObMaxTC + 1,
@@ -165,6 +167,7 @@ OB_INLINE int64_t *get_type_size_map()
     -1, // ObURowID
     -1, //Lob
     -1, //Json
+    4,  // MyInt32  liangman
     -1 // ObMaxType
   };
   STATIC_ASSERT(ARRAYSIZEOF(type_size_map) == common::ObMaxType + 1,
@@ -224,6 +227,7 @@ OB_INLINE int64_t *get_estimate_base_store_size_map()
     8, // ObURowID
     8, //Lob
     9, // ObJsonType
+    4, // MyInt32Type   liangman
     -1 // ObMaxType
   };
   STATIC_ASSERT(ARRAYSIZEOF(estimate_base_store_size_map) == common::ObMaxType + 1,

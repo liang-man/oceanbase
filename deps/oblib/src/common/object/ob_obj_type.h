@@ -88,6 +88,7 @@ enum ObObjType
   ObURowIDType        = 45, // UROWID
   ObLobType           = 46, // Oracle Lob
   ObJsonType          = 47, // Json Type
+  MyInt32Type         = 48, // liangman 4字节 32位的int
   ObMaxType                 // invalid type, or count of obj type
 };
 
@@ -206,6 +207,7 @@ enum ObObjTypeClass
   ObRowIDTC         = 20, // oracle rowid typeclass, includes urowid and rowid
   ObLobTC           = 21, //oracle lob typeclass
   ObJsonTC          = 22, // json type class 
+  MyInt32TC         = 23, // liangman 4字节 32位int
   ObMaxTC,
   // invalid type classes are below, only used as the result of XXXX_type_promotion()
   // to indicate that the two obj can't be promoted to the same type.
@@ -264,7 +266,8 @@ enum ObObjTypeClass
 		(ObNCharType, ObStringTC),                 \
     (ObURowIDType, ObRowIDTC),                 \
     (ObLobType, ObLobTC),                      \
-    (ObJsonType, ObJsonTC)
+    (ObJsonType, ObJsonTC),                    \
+    (MyInt32Type, MyInt32TC)
 
 #define SELECT_SECOND(x, y) y
 #define SELECT_TC(arg) SELECT_SECOND arg
@@ -302,7 +305,8 @@ const ObObjType OBJ_DEFAULT_TYPE[ObActualMaxTC] =
   ObMaxType,        // no default type for rowid type class
   ObLobType,        // lob
   ObJsonType,       // json
-  ObMaxType,        // maxtype
+  MyInt32Type,      // 字节，32位int  liangman
+  // ObMaxType,        // maxtype
   ObUInt64Type,     // int&uint
   ObMaxType,        // lefttype
   ObMaxType,        // righttype
@@ -1041,7 +1045,7 @@ OB_INLINE bool ob_is_castable_type_class(ObObjTypeClass tc)
   return (ObIntTC <= tc && tc <= ObStringTC) || ObLeftTypeTC == tc || ObRightTypeTC == tc
       || ObBitTC == tc || ObEnumSetTC == tc || ObEnumSetInnerTC == tc || ObTextTC == tc
       || ObOTimestampTC == tc || ObRawTC == tc || ObIntervalTC == tc
-      || ObRowIDTC == tc || ObLobTC == tc || ObJsonTC == tc;
+      || ObRowIDTC == tc || ObLobTC == tc || ObJsonTC == tc || MyInt32TC == tc;
 }
 
 //used for arithmetic
@@ -1101,6 +1105,7 @@ inline bool ob_is_raw_tc(ObObjType type) { return ObRawTC == ob_obj_type_class(t
 inline bool ob_is_interval_tc(ObObjType type) { return ObIntervalTC == ob_obj_type_class(type); }
 inline bool ob_is_lob_tc(ObObjType type) { return ObLobTC == ob_obj_type_class(type); }
 inline bool ob_is_json_tc(ObObjType type) { return ObJsonTC == ob_obj_type_class(type); }
+inline bool ob_is_myint32_tc(ObObjType type) { return MyInt32TC == ob_obj_type_class(type); }  // liangman
 
 inline bool is_lob(ObObjType type) { return ob_is_text_tc(type); }
 inline bool is_lob_locator(ObObjType type) { return ObLobType == type; }

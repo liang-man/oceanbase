@@ -1482,7 +1482,7 @@ template<typename T, typename Compare>
 int ObMemorySortRound<T, Compare>::add_item(const T &item)
 {
   int ret = common::OB_SUCCESS;
-  const int64_t item_size = sizeof(T) + item.get_deep_copy_size();
+  const int64_t item_size = sizeof(T) + item.get_deep_copy_size();   // 160 + 896 + 47
   char *buf = NULL;
   T *new_item = NULL;
   if (OB_UNLIKELY(!is_inited_)) {

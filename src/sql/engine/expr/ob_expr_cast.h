@@ -22,7 +22,7 @@ namespace sql
 {
 
 // The length of array need to be equal to the number of types defined at ObObjType
-static const int32_t CAST_STRING_DEFUALT_LENGTH[49] = {
+static const int32_t CAST_STRING_DEFUALT_LENGTH[50] = {
   0, //null
   4, //tinyint
   6, //smallint
@@ -71,6 +71,7 @@ static const int32_t CAST_STRING_DEFUALT_LENGTH[49] = {
   1,//urowid
   1,//lob
   1,
+  11, //MyInt32  liangman
   0//max, invalid type, or count of obj type
 };
 

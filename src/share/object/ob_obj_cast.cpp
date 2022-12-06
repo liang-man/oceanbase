@@ -337,6 +337,7 @@ OB_INLINE int get_cast_ret(const ObCastMode cast_mode,
 #define SET_RES_INTERVAL_YM(res)  SET_RES_OBJ(res, interval_ym, , , value, ObIntervalYMValue())
 #define SET_RES_INTERVAL_DS(res)  SET_RES_OBJ(res, interval_ds, , , value, ObIntervalDSValue())
 #define SET_RES_UROWID(res)       SET_RES_OBJ(res, urowid, , , value, ObURowIDData());
+#define SET_RES_MYINT32(res)      SET_RES_OBJ(res, myint32, expect_type, COMMA, value, 0)   // liangman
 //这里新增了SET_RES_XXXTYPE对应的宏后需要加入到ObObjCaster::get_zero_value()接口中用来获取对应类型的zero value
 
 
@@ -2533,6 +2534,9 @@ static int double_json(const ObObjType expect_type, ObObjCastParams &params,
 
 static int string_int(const ObObjType expect_type, ObObjCastParams &params,
                       const ObObj &in, ObObj &out, const ObCastMode cast_mode);
+// liangman
+static int string_myint32(const ObObjType expect_type, ObObjCastParams &params,
+                      const ObObj &in, ObObj &out, const ObCastMode cast_mode);                    
 static int number_int(const ObObjType expect_type, ObObjCastParams &params,
                       const ObObj &in, ObObj &out, const ObCastMode cast_mode)
 {
@@ -4291,6 +4295,42 @@ int common_string_integer(const ObCastMode &cast_mode,
   return ret;
 }
 
+// liangman
+int my_common_string_integer(const ObCastMode &cast_mode,
+                                 const ObObjType &in_type,
+                                 const ObCollationType &in_cs_type,
+                                 const ObString &in_str,
+                                 const bool is_str_integer_cast,
+                                 int32_t &out_val)
+{
+  int ret = OB_SUCCESS;
+  int err = 0;
+  char *endptr = NULL;
+  if (is_str_integer_cast && CM_IS_STRING_INTEGER_TRUNC(cast_mode)) {
+    out_val = ObCharset::strntoll(in_str.ptr(), in_str.length(), 10, &endptr, &err);
+    if (ERANGE == err && (INT32_MIN == out_val || INT32_MAX == out_val)) {
+      ret = OB_DATA_OUT_OF_RANGE;
+    } else if (endptr == in_str.ptr() || endptr != in_str.ptr() + in_str.length()) {
+      ret = OB_ERR_TRUNCATED_WRONG_VALUE;
+      if (CM_IS_WARN_ON_FAIL(cast_mode)) {
+        ObString tmp_msg("INTEGER");
+        LOG_USER_WARN(OB_ERR_TRUNCATED_WRONG_VALUE, tmp_msg.length(), tmp_msg.ptr(),
+                      in_str.length(), in_str.ptr());
+      }
+    }
+  } else {
+    out_val = static_cast<int32_t>(ObCharset::strntoullrnd(in_str.ptr(), in_str.length(),
+                                                            false, &endptr, &err));
+    if (ERANGE == err && (INT32_MIN == out_val || INT32_MAX == out_val)) {
+      ret = OB_DATA_OUT_OF_RANGE;
+    } else {
+      ret = check_convert_str_err(in_str.ptr(), endptr, in_str.length(), err, in_cs_type);
+    }
+  }
+
+  return ret;
+}
+
 static int string_int(const ObObjType expect_type, ObObjCastParams &params,
                       const ObObj &in, ObObj &out, const ObCastMode cast_mode)
 {
@@ -4311,14 +4351,51 @@ static int string_int(const ObObjType expect_type, ObObjCastParams &params,
   } else if (OB_FAIL(convert_string_collation(in.get_string(), in.get_collation_type(), utf8_string, ObCharset::get_system_collation(), params))) {
       LOG_WARN("convert_string_collation", K(ret));
   } else {
-    const ObString &str = utf8_string;
-    int64_t value = 0;
+    const ObString &str = utf8_string;     // ObString类型有个属性data_length_，表示当前字段值的长度，因为还是字符串，所以有长度
+    int64_t value = 0;                     // 要转换为整型值所存储的变量
     const bool is_str_int_cast = true;
     if (CAST_FAIL(common_string_integer(
                 cast_mode, in.get_type(), in.get_collation_type(), str, is_str_int_cast, value))) {
     } else if (expect_type < ObIntType && CAST_FAIL(int_range_check(expect_type, value, value))) {
     } else {
       SET_RES_INT(out);
+    }
+  }
+  if (OB_SUCC(ret)) {
+    res_precision = get_precision_for_integer(out.get_int());
+  }
+  SET_RES_ACCURACY(res_precision, DEFAULT_SCALE_FOR_INTEGER, DEFAULT_LENGTH_FOR_NUMERIC);
+  return ret;
+}
+
+// liangman
+static int string_myint32(const ObObjType expect_type, ObObjCastParams &params,
+                      const ObObj &in, ObObj &out, const ObCastMode cast_mode)
+{
+  int ret = OB_SUCCESS;
+  ObString utf8_string;
+
+  ObPrecision res_precision = -1;
+  if (OB_UNLIKELY((ObStringTC != in.get_type_class()
+                  && ObTextTC != in.get_type_class())
+                  || MyInt32TC != ob_obj_type_class(expect_type))) {
+    ret = OB_ERR_UNEXPECTED;
+    LOG_ERROR("invalid input type",
+        K(ret), K(in), K(expect_type));
+  } else if (lib::is_oracle_mode() && in.is_blob()) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_ERROR("invalid use of blob type", K(ret), K(in), K(expect_type));
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "Cast to blob type");
+  } else if (OB_FAIL(convert_string_collation(in.get_string(), in.get_collation_type(), utf8_string, ObCharset::get_system_collation(), params))) {
+      LOG_WARN("convert_string_collation", K(ret));
+  } else {
+    const ObString &str = utf8_string;     // ObString类型有个属性data_length_，表示当前字段值的长度，因为还是字符串，所以有长度
+    int32_t value = 0;                     // 要转换为整型值所存储的变量
+    const bool is_str_int_cast = true;
+    if (CAST_FAIL(my_common_string_integer(
+                cast_mode, in.get_type(), in.get_collation_type(), str, is_str_int_cast, value))) {
+    } else {
+      SET_RES_MYINT32(out);
     }
   }
   if (OB_SUCC(ret)) {
@@ -7554,6 +7631,7 @@ ObObjCastFunc OB_OBJ_CAST[ObMaxTC][ObMaxTC] =
     cast_not_expected,/*rowid*/
     string_lob,/*lob*/
     string_json,/*json*/
+    string_myint32,/*myint32*/
   },
   {
     /*extend -> XXX*/
@@ -10625,6 +10703,9 @@ int ObObjCaster::get_zero_value(const ObObjType expect_type, ObCollationType exp
     zero_obj.set_string(expect_type, "");
   } else if (ob_is_text_tc(expect_type)) {
     zero_obj.set_lob_value(expect_type, static_cast<const char *>(NULL), 0);
+  } else if (ob_is_myint32_tc(expect_type)) {    // liangman
+    int32_t value = 0;
+    SET_RES_MYINT32(zero_obj);
   } else if (ob_is_int_tc(expect_type)) {
     int64_t value = 0;
     SET_RES_INT(zero_obj);

@@ -766,6 +766,7 @@ const char *ob_sql_tc_str(ObObjTypeClass tc)
     "ROWID",
     "LOB",
     "JSON",
+    "MyInt32",
     ""
   };
   static_assert(sizeof(sql_tc_name) / sizeof(const char *) == ObMaxTC + 1, "Not enough initializer");

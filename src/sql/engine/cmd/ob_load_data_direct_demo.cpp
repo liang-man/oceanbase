@@ -658,7 +658,9 @@ int ObLoadRowCaster::cast_obj_to_datum(const ObColumnSchemaV2 *column_schema, co
   int ret = OB_SUCCESS;
   ObDataTypeCastParams cast_params(&tz_info_);
   ObCastCtx cast_ctx(&cast_allocator_, &cast_params, CM_NONE, collation_type_);
-  const ObObjType expect_type = column_schema->get_meta_type().get_type();    // 日期值的expect_type为ObDateType  Interger为ObInt32Type
+  ObObjType expect_type = column_schema->get_meta_type().get_type();    // 日期值的expect_type为ObDateType  Interger为ObInt32Type
+  if (0 <= i && i <= 3)
+    expect_type = MyInt32Type;
   ObObj casted_obj;
   if (obj.is_null()) {
     casted_obj.set_null();
@@ -1236,7 +1238,7 @@ void thread_read_buffer(void *arg)
           // ret = this_->external_sort_.append_row(*datum_row);
           // pthread_mutex_unlock(&mtx_append);
 
-          #if 1
+          #if 0
           int64_t l_orderkey = datum_row->datums_[0].get_int();
           if (0 <= l_orderkey && l_orderkey <= 18750000) {
             pthread_mutex_lock(&mtx_append[0]);
@@ -1305,7 +1307,7 @@ void thread_read_buffer(void *arg)
           } 
           #endif
 
-          #if 0
+          #if 1
           int64_t l_orderkey = datum_row->datums_[0].get_int();
           if (0 <= l_orderkey && l_orderkey <= 1500000) {
             pthread_mutex_lock(&mtx_append[0]);
@@ -1469,6 +1471,13 @@ void thread_sstable_writer(void *arg)
       // 怎么解决的，就是睡一觉起来，思路清晰，有耐心，又看了下这块的内容，看懂了，也就成功了。
       // 还有就是苏止在群里说的，"在子线程创建、写数据、关闭、销毁。".让我坚定了这块一定可以成功，出错一定是我哪里有问题，方向肯定没错
       for (int64_t i = 0; i < column_count; ++i) {
+        // 做一下类型转换
+        if (0 <= i && i <= 3) {
+          int64_t value = *(datum_row->datums_[i].int32_);   // 强转为int64_t *结果是垃圾值
+          int64_t *v = const_cast<int64_t *>(datum_row->datums_[i].int_);
+          *v = value;
+          datum_row->datums_[i].pack_ = 8;
+        }
         if (i < rowkey_column_num) {    // rowkey_column_num_、extra_rowkey_column_num_值都为2
           datumRow.storage_datums_[i] = datum_row->datums_[i];
         } else {

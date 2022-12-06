@@ -666,7 +666,9 @@ union ObObjValue
 {
   int64_t int64_;
   uint64_t uint64_;
-  // uint32_t uint32_;   // liangman
+
+  int32_t int32_;   // liangman
+  uint32_t uint32_; // liangman
 
   float float_;
   double double_;
@@ -803,6 +805,8 @@ public:
   void set_meta_type(const ObObjMeta &type) { meta_ = type; }
   void set_collation(const ObObjMeta &type) { meta_.set_collation(type); }
   void set_scale(ObScale scale) { meta_.set_scale(scale); }
+
+  void set_myint32(const ObObjType type, const int64_t value);   // liangman
 
   void set_int(const ObObjType type, const int64_t value);
   void set_tinyint(const int8_t value);
@@ -1531,6 +1535,14 @@ inline void ObObj::set_int(const ObObjType type, const int64_t value)
   meta_.set_type(type);
   meta_.set_collation_level(CS_LEVEL_NUMERIC);
   v_.int64_ = value;
+}
+
+// liangman
+inline void ObObj::set_myint32(const ObObjType type, const int64_t value)
+{
+  meta_.set_type(type);
+  meta_.set_collation_level(CS_LEVEL_NUMERIC);
+  v_.int32_ = value;
 }
 
 inline void ObObj::set_tinyint(const int8_t value)

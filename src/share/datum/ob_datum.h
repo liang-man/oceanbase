@@ -108,6 +108,7 @@ enum DatumReserveSize {
 struct ObDatumPtr {
   union {
     const char *ptr_;
+    const int32_t *int32_;    // liangman
     const int64_t *int_;
     const uint64_t *uint_;
     const float *float_;
@@ -425,6 +426,8 @@ public:
   inline void datum2obj(ObObj &obj) const;
   template <ObObjDatumMapType type>
   inline void datum2datum(const ObDatum &datum);
+  template <ObObjDatumMapType type>
+  inline void myobj2datum(const ObObj &obj);    // liangman
 
 }__attribute__ ((packed)) ;
 
@@ -636,6 +639,14 @@ inline void ObDatum::obj2datum<OBJ_DATUM_4BYTE_DATA>(const ObObj &obj)
   pack_ = sizeof(uint32_t);
 }
 
+// liangman
+template <>
+inline void ObDatum::myobj2datum<OBJ_DATUM_4BYTE_DATA>(const ObObj &obj)
+{
+  memcpy(no_cv(ptr_), &obj.v_.int32_, sizeof(int32_t));
+  pack_ = sizeof(int32_t);
+}
+
 template <>
 inline void ObDatum::datum2obj<OBJ_DATUM_4BYTE_DATA>(ObObj &obj) const
 {
@@ -784,8 +795,8 @@ inline int ObDatum::my_from_obj(const ObObj &obj)
         obj2datum<OBJ_DATUM_NULL>(obj);
         break;
       }
-      case ObInt32Type: {
-        obj2datum<OBJ_DATUM_8BYTE_DATA>(obj);
+      case MyInt32Type: {
+        myobj2datum<OBJ_DATUM_4BYTE_DATA>(obj);
         break;
       }
       default:
@@ -854,6 +865,7 @@ inline int ObDatum::from_obj(const ObObj &obj)
         obj2datum<OBJ_DATUM_8BYTE_DATA>(obj);
         break;
       }
+      case MyInt32Type:
       case ObFloatType:
       case ObUFloatType:
       case ObDateType: {
@@ -976,6 +988,7 @@ inline int ObDatum::to_obj(ObObj &obj, const ObObjMeta &meta) const
       }
       case ObFloatType:
       case ObUFloatType:
+      case MyInt32Type:
       case ObDateType: {
         datum2obj<OBJ_DATUM_4BYTE_DATA>(obj);
         break;
