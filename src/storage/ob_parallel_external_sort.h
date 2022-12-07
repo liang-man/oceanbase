@@ -126,6 +126,15 @@ int ObMacroBufferWriter<T>::write_item(const T &item)
     STORAGE_LOG(DEBUG, "write_item", K(buf_pos_), K(item));
   }
   return ret;
+
+  // int ret = common::OB_SUCCESS;
+  // int item_size = item.get_serialize_size();
+  // if (item_size + buf_pos_ > buf_cap_) {
+  //   ret = common::OB_EAGAIN;
+  //   return ret;
+  // } 
+  // item.serialize(buf_, buf_cap_, buf_pos_);
+  // return ret;
 }
 
 template<typename T>
@@ -1532,8 +1541,8 @@ int ObMemorySortRound<T, Compare>::build_fragment()
     }
 
     start = common::ObTimeUtility::current_time();
+    int size = item_list_.size();
     for (int64_t i = 0; OB_SUCC(ret) && i < item_list_.size(); ++i) {
-      int size = item_list_.size();
       if (OB_FAIL(next_round_->add_item(*item_list_.at(i)))) {
         STORAGE_LOG(WARN, "fail to add item", K(ret));
       }
