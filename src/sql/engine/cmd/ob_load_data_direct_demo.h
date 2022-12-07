@@ -174,7 +174,7 @@ public:
   // 初始化时就会建立好映射关系
   int init(const share::schema::ObTableSchema *table_schema,
            const common::ObIArray<ObLoadDataStmt::FieldOrVarStruct> &field_or_var_list);
-  int get_casted_row(const common::ObNewRow &new_row, ObLoadDatumRow *&datum_row);    // new_row是解析出的每个字段的值，都是string；datum_row是类型转换后的值. 字段顺序都是已经转换好了
+  int get_casted_row(const common::ObNewRow &new_row, ObLoadDatumRow *datum_row);    // new_row是解析出的每个字段的值，都是string；datum_row是类型转换后的值. 字段顺序都是已经转换好了
 private:
   // 做了一个映射，将存储层的字段的位置对应到数据源的字段位置
   int init_column_schemas_and_idxs(
