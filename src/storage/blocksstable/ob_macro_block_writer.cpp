@@ -94,11 +94,13 @@ int ObMicroBlockBufferHelper::compress_encrypt_micro_block(ObMicroBlockDesc &mic
   } else if (OB_FAIL(compressor_.compress(block_buffer, block_size, compress_buf, compress_buf_size))) {
     STORAGE_LOG(WARN, "macro block writer fail to compress.",
         K(ret), K(OB_P(block_buffer)), K(block_size));
-  } else if (MICRO_BLOCK_MERGE_VERIFY_LEVEL::NONE != micro_block_merge_verify_level_
-      && OB_FAIL(check_micro_block(compress_buf, compress_buf_size,
-            block_buffer, block_size, micro_block_desc))) {
-    STORAGE_LOG(WARN, "failed to check micro block", K(ret));
-  } else {
+  } 
+  // else if (MICRO_BLOCK_MERGE_VERIFY_LEVEL::NONE != micro_block_merge_verify_level_
+  //     && OB_FAIL(check_micro_block(compress_buf, compress_buf_size,
+  //           block_buffer, block_size, micro_block_desc))) {
+  //   STORAGE_LOG(WARN, "failed to check micro block", K(ret));
+  // } 
+  else {
     ObMicroBlockHeader *header = const_cast<ObMicroBlockHeader *>(micro_block_desc.header_);
     micro_block_desc.buf_ = compress_buf;
     micro_block_desc.buf_size_ = compress_buf_size;
