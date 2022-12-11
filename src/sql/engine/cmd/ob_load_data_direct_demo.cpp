@@ -1238,7 +1238,7 @@ void thread_read_buffer(void *arg)
           // ret = this_->external_sort_.append_row(*datum_row);
           // pthread_mutex_unlock(&mtx_append);
 
-          #if 1
+          #if 0
           int64_t l_orderkey = datum_row->datums_[0].get_int();
           if (0 <= l_orderkey && l_orderkey <= 18750000) {
             pthread_mutex_lock(&mtx_append[0]);
@@ -1307,7 +1307,7 @@ void thread_read_buffer(void *arg)
           } 
           #endif
 
-          #if 0
+          #if 1
           int64_t l_orderkey = datum_row->datums_[0].get_int();
           if (0 <= l_orderkey && l_orderkey <= 1500000) {
             pthread_mutex_lock(&mtx_append[0]);
